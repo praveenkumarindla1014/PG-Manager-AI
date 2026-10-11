@@ -1,121 +1,89 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { useAuth } from '../../context/AuthContext';
-import { 
-  LayoutDashboard, 
-  Home, 
-  Users, 
-  CreditCard, 
-  AlertCircle, 
-  Utensils, 
-  Bell, 
-  Wrench, 
-  FileText, 
-  BookOpen, 
-  Sparkles
+import {
+  LayoutDashboard, BedDouble, Users, Wallet, MessageSquareWarning, UtensilsCrossed, Megaphone,
+  Wrench, BarChart3, BookOpen, DoorOpen, UserCog, Sparkles, Building2
 } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
+import { Avatar } from '../ui';
 
-export default function Sidebar() {
+const OWNER_NAV = [
+  { section: 'Overview' },
+  { path: '/owner-dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { section: 'Property' },
+  { path: '/rooms', label: 'Rooms & Beds', icon: BedDouble },
+  { path: '/tenants', label: 'Tenants', icon: Users },
+  { path: '/payments', label: 'Rent & Payments', icon: Wallet },
+  { path: '/visitors', label: 'Visitors', icon: DoorOpen },
+  { section: 'Operations' },
+  { path: '/complaints', label: 'Complaints', icon: MessageSquareWarning },
+  { path: '/maintenance', label: 'Maintenance', icon: Wrench },
+  { path: '/menu', label: 'Food Menu', icon: UtensilsCrossed },
+  { path: '/notices', label: 'Notices', icon: Megaphone },
+  { section: 'Business' },
+  { path: '/reports', label: 'Reports & Expenses', icon: BarChart3 },
+  { path: '/knowledge-base', label: 'Rules & Policies', icon: BookOpen }
+];
+
+const TENANT_NAV = [
+  { section: 'My stay' },
+  { path: '/tenant-dashboard', label: 'Home', icon: LayoutDashboard },
+  { path: '/payments', label: 'My Rent', icon: Wallet },
+  { path: '/complaints', label: 'Report an Issue', icon: MessageSquareWarning },
+  { path: '/menu', label: 'Food Menu', icon: UtensilsCrossed },
+  { path: '/notices', label: 'Notices', icon: Megaphone },
+  { path: '/visitors', label: 'My Visitors', icon: DoorOpen },
+  { section: 'Explore' },
+  { path: '/rooms', label: 'Rooms', icon: BedDouble },
+  { path: '/knowledge-base', label: 'PG Rules', icon: BookOpen }
+];
+
+export default function Sidebar({ open, onClose, onOpenAI }) {
   const { user } = useAuth();
-  const isOwner = user?.role === 'owner';
-
-  const navItems = isOwner ? [
-    { path: '/owner-dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { path: '/rooms', label: 'Rooms & Vacancy', icon: Home },
-    { path: '/tenants', label: 'Tenants & Verification', icon: Users },
-    { path: '/payments', label: 'Rent & Payments', icon: CreditCard },
-    { path: '/complaints', label: 'Complaint Box', icon: AlertCircle },
-    { path: '/menu', label: 'Weekly Food Menu', icon: Utensils },
-    { path: '/notices', label: 'Smart Notices', icon: Bell },
-    { path: '/maintenance', label: 'Maintenance Schedule', icon: Wrench },
-    { path: '/reports', label: 'Reports & Expenses', icon: FileText },
-    { path: '/knowledge-base', label: 'Rules & Knowledge Base', icon: BookOpen }
-  ] : [
-    { path: '/tenant-dashboard', label: 'My Dashboard', icon: LayoutDashboard },
-    { path: '/rooms', label: 'Find Rooms', icon: Home },
-    { path: '/payments', label: 'My Rent Payments', icon: CreditCard },
-    { path: '/complaints', label: 'Report Issue', icon: AlertCircle },
-    { path: '/menu', label: 'Weekly Food Menu', icon: Utensils },
-    { path: '/notices', label: 'Announcements', icon: Bell },
-    { path: '/knowledge-base', label: 'PG Rules & Policy', icon: BookOpen }
-  ];
+  const nav = user?.role === 'owner' ? OWNER_NAV : TENANT_NAV;
 
   return (
-    <aside style={{
-      width: '260px',
-      height: '100%',
-      background: '#ffffff',
-      borderRight: '1px solid #e2e8f0',
-      display: 'flex',
-      flexDirection: 'column',
-      padding: '1.25rem',
-      boxShadow: '2px 0 10px rgba(0,0,0,0.02)'
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '2rem', padding: '0.25rem' }}>
-        <img src="/build_icon.png" alt="PG Manager Logo" style={{ width: '36px', height: '36px', objectFit: 'contain' }} />
-        <div>
-          <h2 style={{ fontSize: '1.25rem', fontWeight: '800', color: '#0f172a', letterSpacing: '-0.02em' }}>
-            PG Manager<sup style={{ fontSize: '0.65rem', color: 'var(--primary)' }}>TM</sup>
-          </h2>
-          <span className="badge badge-primary" style={{ fontSize: '0.65rem', padding: '0.1rem 0.4rem' }}>
-            <Sparkles size={10} /> Smart AI
+    <>
+      <div className={`sidebar-scrim ${open ? 'open' : ''}`} onClick={onClose} />
+      <aside className={`sidebar ${open ? 'open' : ''}`}>
+        <div className="brand">
+          <div className="brand-mark"><Building2 size={20} /></div>
+          <div>
+            <div className="brand-name">PG Manager</div>
+            <div className="brand-sub">{user?.role === 'owner' ? 'Owner console' : 'Resident app'}</div>
+          </div>
+        </div>
+
+        <nav style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 2, margin: '0 -4px', padding: '0 4px' }}>
+          {nav.map((item, i) => item.section
+            ? <div key={i} className="nav-section">{item.section}</div>
+            : (
+              <NavLink key={item.path} to={item.path} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} onClick={onClose}>
+                <item.icon size={18} />
+                <span>{item.label}</span>
+              </NavLink>
+            ))}
+        </nav>
+
+        <button className="card-soft row" style={{ padding: '12px 14px', cursor: 'pointer', textAlign: 'left', border: '1px solid var(--brand-100)', background: 'var(--brand-50)' }} onClick={() => { onOpenAI(); onClose(); }}>
+          <Sparkles size={18} className="text-brand" />
+          <span className="grow">
+            <span className="bold small" style={{ display: 'block' }}>Ask PG Buddy</span>
+            <span className="tiny muted">Your AI assistant · Ctrl+K</span>
           </span>
-        </div>
-      </div>
+        </button>
 
-      <nav style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', flex: 1 }}>
-        {navItems.map(item => (
-          <NavLink
-            key={item.path}
-            to={item.path}
-            style={({ isActive }) => ({
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.85rem',
-              padding: '0.7rem 0.95rem',
-              borderRadius: 'var(--radius-sm)',
-              color: isActive ? 'var(--primary)' : '#475569',
-              background: isActive ? 'rgba(208, 18, 78, 0.08)' : 'transparent',
-              borderLeft: isActive ? '3px solid var(--primary)' : '3px solid transparent',
-              fontWeight: isActive ? '700' : '500',
-              textDecoration: 'none',
-              transition: 'var(--transition)'
-            })}
-          >
-            <item.icon size={18} />
-            <span style={{ fontSize: '0.88rem' }}>{item.label}</span>
+        <div className="sidebar-footer">
+          <NavLink to="/profile" className="user-chip" onClick={onClose} style={{ textDecoration: 'none', color: 'inherit' }}>
+            <Avatar name={user?.name} />
+            <span className="grow" style={{ minWidth: 0 }}>
+              <span className="bold small ellipsis" style={{ display: 'block' }}>{user?.name}</span>
+              <span className="tiny faint">{user?.role === 'owner' ? 'Owner' : user?.roomId?.roomNumber ? `Room ${user.roomId.roomNumber}` : 'Resident'}</span>
+            </span>
+            <UserCog size={16} className="faint" />
           </NavLink>
-        ))}
-      </nav>
-
-      <div style={{
-        padding: '0.85rem',
-        marginTop: 'auto',
-        background: '#f8fafc',
-        borderRadius: 'var(--radius-sm)',
-        border: '1px solid #e2e8f0'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-          <div style={{
-            width: '34px',
-            height: '34px',
-            borderRadius: '50%',
-            background: 'var(--primary)',
-            color: 'white',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontWeight: 'bold',
-            fontSize: '0.85rem'
-          }}>
-            {user?.name?.[0] || 'U'}
-          </div>
-          <div style={{ flex: 1, overflow: 'hidden' }}>
-            <p style={{ fontSize: '0.85rem', fontWeight: '700', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', color: '#0f172a' }}>{user?.name}</p>
-            <p style={{ fontSize: '0.72rem', color: '#64748b', textTransform: 'capitalize' }}>{user?.role}</p>
-          </div>
         </div>
-      </div>
-    </aside>
+      </aside>
+    </>
   );
 }

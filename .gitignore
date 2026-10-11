@@ -16,3 +16,6 @@ build/
 Thumbs.db
 .vscode/
 .idea/
+
+# Local embedded database & backups
+backend/.data/

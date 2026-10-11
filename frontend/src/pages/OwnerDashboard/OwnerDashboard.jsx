@@ -1,183 +1,245 @@
-import React, { useState, useEffect } from 'react';
-import { apiFetch } from '../../services/api';
-import { 
-  Building2, 
-  IndianRupee, 
-  AlertCircle, 
-  TrendingUp, 
-  CheckSquare, 
-  Sparkles, 
-  Users, 
-  Zap, 
-  DollarSign, 
-  AlertTriangle,
-  ArrowUpRight
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import {
+  BedDouble, Wallet, AlertCircle, MessageSquareWarning, Sparkles, Send, RefreshCw, ListChecks,
+  Wrench, CalendarClock, ArrowRight, Lightbulb, DoorOpen, Users, Loader2
 } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
+import { useApi, useToast, useLiveRefresh } from '../../context/AppContext';
+import { api } from '../../services/api';
+import { Card, StatCard, Badge, Skeleton, SkeletonCards, EmptyState, Modal, AnimatedNumber } from '../../components/ui';
+import { BarChart, DonutChart, HBars } from '../../components/ui/Charts';
+import { inr, compactInr, greeting, firstName, formatDate, timeAgo, titleCase } from '../../utils/format';
 
 export default function OwnerDashboard() {
-  const [summary, setSummary] = useState(null);
-  const [insights, setInsights] = useState(null);
-  const [riskyTenants, setRiskyTenants] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const toast = useToast();
 
-  useEffect(() => {
-    Promise.all([
-      apiFetch('/reports/daily-summary'),
-      apiFetch('/reports/insights'),
-      apiFetch('/tenants/risky')
-    ]).then(([sumRes, insRes, riskRes]) => {
-      setSummary(sumRes.data);
-      setInsights(insRes.data);
-      setRiskyTenants(riskRes.data || []);
-    }).catch(err => console.error(err))
-      .finally(() => setLoading(false));
-  }, []);
+  const dash = useApi('/reports/dashboard');
+  const todo = useApi('/reports/todo', { initial: [] });
+  const complaints = useApi('/complaints', { initial: [] });
+  const [brief, setBrief] = useState({ data: null, loading: true });
+  const [reminders, setReminders] = useState(null);
+  const [sending, setSending] = useState(false);
 
-  if (loading) {
-    return <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>Loading Executive Dashboard...</div>;
-  }
+  const loadBrief = async (refresh = false) => {
+    setBrief(b => ({ ...b, loading: true }));
+    try {
+      const res = await api.get(`/reports/daily-summary${refresh ? '?refresh=true' : ''}`);
+      setBrief({ data: res.data, loading: false });
+    } catch (e) {
+      setBrief({ data: null, loading: false });
+      if (refresh) toast(e.message, 'error');
+    }
+  };
+
+  // AI brief loads separately so KPIs appear instantly.
+  React.useEffect(() => { loadBrief(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useLiveRefresh(['complaint-updated', 'payment-updated'], () => {
+    dash.reload({ silent: true });
+    todo.reload({ silent: true });
+    complaints.reload({ silent: true });
+  });
+
+  const sendReminders = async () => {
+    setSending(true);
+    try {
+      const res = await api.post('/payments/reminders', {});
+      if (!res.data.length) toast('Everyone has paid this month 🎉');
+      else setReminders(res.data);
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const d = dash.data;
+  const occ = d?.occupancy;
+  const fin = d?.finance;
+  const openComplaints = (complaints.data || []).filter(c => ['open', 'in-progress'].includes(c.status)).slice(0, 5);
+  const headline = brief.data?.aiInsights?.[0];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-      {/* Title */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div>
-          <h2 style={{ fontSize: '1.4rem', fontWeight: '800' }}>Management Dashboard</h2>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Real-time property metrics & business intelligence</p>
+    <div className="page">
+      <div className="hero-card">
+        <div className="row between wrap" style={{ position: 'relative', zIndex: 1, gap: 18 }}>
+          <div className="grow" style={{ minWidth: 260 }}>
+            <div className="small bold" style={{ opacity: 0.85 }}>{new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
+            <h1 className="display" style={{ fontSize: '2rem', margin: '4px 0 8px' }}>{greeting()}, {firstName(user?.name)} 👋</h1>
+            <p style={{ opacity: 0.92, maxWidth: 620, minHeight: 22 }}>
+              {brief.loading && !headline
+                ? <span className="row-sm"><Loader2 size={15} className="spin" />PG Buddy is reading today's numbers…</span>
+                : headline || (d ? `${occ.occupiedBeds} of ${occ.totalBeds} beds filled and ${inr(fin.collected)} collected so far this month.` : 'Here’s what’s happening at your PG today.')}
+            </p>
+          </div>
+          <div className="row wrap">
+            <button className="btn btn-white" onClick={() => window.dispatchEvent(new Event('pg:open-ai'))}><Sparkles size={16} />Ask AI</button>
+            <button className="btn" style={{ background: 'rgba(255,255,255,0.18)', color: '#fff' }} onClick={sendReminders} disabled={sending}>
+              {sending ? <Loader2 size={16} className="spin" /> : <Send size={16} />}Send rent reminders
+            </button>
+          </div>
         </div>
-        <span className="badge badge-cyan" style={{ padding: '0.35rem 0.75rem' }}>
-          <Sparkles size={12} /> Daily Executive Brief
-        </span>
       </div>
 
-      {/* Metric Cards */}
-      <div className="grid-4">
-        <div className="glass-card" style={{ padding: '1.25rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', fontWeight: '600' }}>Occupancy Rate</span>
-            <Building2 size={18} color="var(--primary)" />
-          </div>
-          <h3 style={{ fontSize: '1.5rem', fontWeight: '800' }}>{summary?.occupancyRate || 0}%</h3>
-          <p style={{ fontSize: '0.75rem', color: '#34d399', marginTop: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
-            <ArrowUpRight size={12} /> {summary?.occupiedRooms || 0} / {summary?.totalRooms || 0} Rooms Occupied
-          </p>
+      {dash.loading && !d ? (
+        <div className="grid-4"><SkeletonCards count={4} height={128} /></div>
+      ) : d ? (
+        <div className="grid-4">
+          <StatCard label="Bed occupancy" icon={BedDouble} tone="brand"
+            value={<><AnimatedNumber value={occ.occupancyRate} format={v => v.toFixed(1)} />%</>}
+            progress={occ.occupancyRate}
+            foot={`${occ.occupiedBeds}/${occ.totalBeds} beds · ${occ.vacantBeds} vacant`}
+            onClick={() => navigate('/rooms')} />
+          <StatCard label={`Collected · ${fin.label}`} icon={Wallet} tone="success"
+            value={<AnimatedNumber value={fin.collected} format={v => inr(v)} />}
+            progress={fin.collectionRate}
+            foot={`${fin.collectionRate}% of ${inr(fin.expected)}`}
+            onClick={() => navigate('/payments')} />
+          <StatCard label="Pending rent" icon={AlertCircle} tone={fin.pendingCount ? 'warning' : 'success'}
+            value={<AnimatedNumber value={fin.pending} format={v => inr(v)} />}
+            foot={fin.pendingCount ? `${fin.pendingCount} tenant(s) · ${fin.overdueCount} overdue` : 'All rent collected 🎉'}
+            onClick={() => navigate('/payments')} />
+          <StatCard label="Open complaints" icon={MessageSquareWarning} tone={d.complaints.emergency ? 'danger' : 'info'}
+            value={<AnimatedNumber value={d.complaints.open} />}
+            foot={d.complaints.emergency ? <span className="text-danger bold">{d.complaints.emergency} emergency</span> : `${d.complaints.highPriority} high priority`}
+            onClick={() => navigate('/complaints')} />
         </div>
+      ) : (
+        <Card><EmptyState title="Couldn't load the dashboard" message={dash.error} action={<button className="btn btn-secondary" onClick={() => dash.reload()}>Try again</button>} /></Card>
+      )}
 
-        <div className="glass-card" style={{ padding: '1.25rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', fontWeight: '600' }}>Monthly Income</span>
-            <IndianRupee size={18} color="var(--accent-emerald)" />
-          </div>
-          <h3 style={{ fontSize: '1.5rem', fontWeight: '800' }}>₹{(summary?.todayIncome || 0).toLocaleString('en-IN')}</h3>
-          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
-            Pending Rent: ₹{(summary?.pendingRent || 0).toLocaleString('en-IN')}
-          </p>
+      {d && (
+        <div className="grid-main">
+          <Card title="Income vs expenses" subtitle="Last 6 months" icon={Wallet}
+            actions={<span className="small muted">Profit this month <b className={fin.profit >= 0 ? 'text-success' : 'text-danger'}>{compactInr(fin.profit)}</b></span>}>
+            <BarChart data={d.trend} series={[
+              { key: 'income', label: 'Rent collected', color: 'var(--brand)' },
+              { key: 'expenses', label: 'Expenses', color: '#f2a65a' }
+            ]} />
+          </Card>
+          <Card title="Occupancy" subtitle={`${occ.totalRooms} rooms · ${d.tenants} residents`} icon={BedDouble}>
+            <div className="stack-lg">
+              <DonutChart size={150} centerValue={`${Math.round(occ.occupancyRate)}%`} centerLabel="occupied" segments={[
+                { label: 'Occupied beds', value: occ.occupiedBeds, color: 'var(--brand)' },
+                { label: 'Vacant beds', value: occ.vacantBeds, color: '#f2c94c' }
+              ]} />
+              <HBars items={occ.byFloor.map(f => ({ label: `Floor ${f.floor}`, value: f.occupied, max: f.beds, display: `${f.occupied}/${f.beds} beds` }))} />
+            </div>
+          </Card>
         </div>
+      )}
 
-        <div className="glass-card" style={{ padding: '1.25rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', fontWeight: '600' }}>Pending Issues</span>
-            <AlertCircle size={18} color="var(--accent-amber)" />
-          </div>
-          <h3 style={{ fontSize: '1.5rem', fontWeight: '800' }}>{summary?.pendingComplaints || 0}</h3>
-          <p style={{ fontSize: '0.75rem', color: '#fb7185', marginTop: '0.25rem' }}>
-            {summary?.emergencyComplaints || 0} Urgent Items
-          </p>
-        </div>
+      <div className="grid-main">
+        <Card title="AI daily brief" subtitle={brief.data?.updatedAt ? `Updated ${timeAgo(brief.data.updatedAt)}` : 'Insights from today’s data'} icon={Lightbulb}
+          actions={<button className="btn btn-ghost btn-sm" onClick={() => loadBrief(true)} disabled={brief.loading}><RefreshCw size={14} className={brief.loading ? 'spin' : ''} />Refresh</button>}>
+          {brief.loading && !brief.data ? (
+            <div className="stack">{[0, 1, 2, 3].map(i => <Skeleton key={i} height={18} width={`${92 - i * 9}%`} />)}</div>
+          ) : brief.data?.aiInsights?.length ? (
+            <div className="stack">
+              {brief.data.aiInsights.map((ins, i) => (
+                <div key={i} className="row" style={{ alignItems: 'flex-start' }}>
+                  <span className="stat-icon" style={{ width: 26, height: 26, borderRadius: 8, background: 'var(--brand-50)', color: 'var(--brand)' }}><Sparkles size={13} /></span>
+                  <span className="grow" style={{ paddingTop: 3 }}>{ins}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <EmptyState icon={Lightbulb} title="No insights yet" message="Refresh to generate today's brief." />
+          )}
+        </Card>
 
-        <div className="glass-card" style={{ padding: '1.25rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', fontWeight: '600' }}>Visitors Today</span>
-            <Users size={18} color="var(--accent-cyan)" />
-          </div>
-          <h3 style={{ fontSize: '1.5rem', fontWeight: '800' }}>{summary?.todayVisitors || 0}</h3>
-          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
-            Checked In
-          </p>
-        </div>
+        <Card title="Today's to-do" subtitle="Prioritised for you" icon={ListChecks}>
+          {todo.loading && !todo.data?.length ? (
+            <div className="stack">{[0, 1, 2].map(i => <Skeleton key={i} height={40} />)}</div>
+          ) : todo.data?.length ? (
+            <div className="list">
+              {todo.data.slice(0, 7).map((t, i) => (
+                <button key={i} className="list-item" style={{ background: 'none', border: 'none', borderBottom: '1px solid var(--border)', cursor: 'pointer', textAlign: 'left', width: '100%' }}
+                  onClick={() => t.link && navigate(t.link)}>
+                  <Badge status={t.priority} />
+                  <span className="grow small">{t.task}</span>
+                  <ArrowRight size={14} className="faint" />
+                </button>
+              ))}
+            </div>
+          ) : (
+            <EmptyState icon={ListChecks} title="Nothing urgent" message="You're on top of everything today ✨" />
+          )}
+        </Card>
       </div>
 
       <div className="grid-2">
-        {/* Business Insights */}
-        <div className="glass-card" style={{ padding: '1.35rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-            <Zap size={18} color="var(--accent-amber)" />
-            <h3 style={{ fontSize: '1rem', fontWeight: '700' }}>Daily Business Insights</h3>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
-            {summary?.aiInsights && summary.aiInsights.map((insight, idx) => (
-              <div key={idx} style={{
-                padding: '0.65rem 0.85rem',
-                background: 'rgba(255,255,255,0.03)',
-                borderRadius: 'var(--radius-sm)',
-                borderLeft: '3px solid var(--primary)',
-                fontSize: '0.84rem'
-              }}>
-                ✨ {insight}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Smart To-Do List */}
-        <div className="glass-card" style={{ padding: '1.35rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-            <CheckSquare size={18} color="var(--accent-emerald)" />
-            <h3 style={{ fontSize: '1rem', fontWeight: '700' }}>Smart Action Checklist</h3>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
-            {summary?.todoList && summary.todoList.map((item, idx) => (
-              <div key={idx} style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '0.6rem 0.85rem',
-                background: 'rgba(15, 23, 42, 0.6)',
-                borderRadius: 'var(--radius-sm)',
-                border: '1px solid var(--border-glass)'
-              }}>
-                <span style={{ fontSize: '0.82rem' }}>{item.task}</span>
-                <span className={`badge badge-${item.priority === 'high' ? 'danger' : 'warning'}`} style={{ fontSize: '0.65rem' }}>
-                  {item.priority}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Risky Tenant Monitor */}
-      <div className="glass-card" style={{ padding: '1.35rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-          <AlertTriangle size={18} color="#f43f5e" />
-          <h3 style={{ fontSize: '1rem', fontWeight: '700' }}>Risk & Payment Behavior Monitor</h3>
-        </div>
-        {riskyTenants.length === 0 ? (
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>No risky tenants detected. All residents are in good standing! 🎉</p>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
-            {riskyTenants.map((t, idx) => (
-              <div key={idx} style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '0.75rem 1rem',
-                background: 'rgba(244, 63, 94, 0.06)',
-                border: '1px solid rgba(244, 63, 94, 0.2)',
-                borderRadius: 'var(--radius-sm)'
-              }}>
-                <div>
-                  <h4 style={{ fontSize: '0.88rem', fontWeight: '700' }}>{t.name} (Room {t.roomId?.roomNumber || '?'})</h4>
-                  <p style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>
-                    Risk Index: {t.violationScore}/100 | Late Payment Probability: {t.paymentBehavior?.lateProbability || 0}%
-                  </p>
+        <Card title="Open complaints" icon={MessageSquareWarning}
+          actions={<button className="btn btn-ghost btn-sm" onClick={() => navigate('/complaints')}>View all<ArrowRight size={14} /></button>}>
+          {complaints.loading && !complaints.data?.length ? (
+            <div className="stack">{[0, 1, 2].map(i => <Skeleton key={i} height={44} />)}</div>
+          ) : openComplaints.length ? (
+            <div className="list">
+              {openComplaints.map(c => (
+                <div key={c._id} className="list-item">
+                  <span style={{ fontSize: '1.2rem' }}>{c.sentimentEmoji || '😐'}</span>
+                  <div className="grow" style={{ minWidth: 0 }}>
+                    <div className="bold small ellipsis">{c.description}</div>
+                    <div className="tiny faint">Room {c.room?.roomNumber || '—'} · {c.tenant?.name || 'Tenant'} · {timeAgo(c.createdAt)}</div>
+                  </div>
+                  {c.isEmergency ? <Badge tone="danger">Emergency</Badge> : <Badge status={c.aiPriority}>{titleCase(c.aiPriority)}</Badge>}
                 </div>
-                <span className="badge badge-danger">Attention Required</span>
-              </div>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          ) : (
+            <EmptyState icon={MessageSquareWarning} title="No open complaints" message="Residents are happy right now 🎉" />
+          )}
+        </Card>
+
+        <Card title="Coming up" icon={CalendarClock}
+          actions={<button className="btn btn-ghost btn-sm" onClick={() => navigate('/maintenance')}>Schedule<ArrowRight size={14} /></button>}>
+          {d && (
+            <div className="row wrap" style={{ marginBottom: 12, gap: 8 }}>
+              <span className="feature-tag"><DoorOpen size={13} />{d.visitors.today} visitor(s) today</span>
+              {d.visitors.pendingApproval > 0 && <Badge tone="warning">{d.visitors.pendingApproval} awaiting approval</Badge>}
+              <span className="feature-tag"><Wallet size={13} />{inr(d.todayIncome)} collected today</span>
+              <span className="feature-tag"><Users size={13} />{d.tenants} residents</span>
+            </div>
+          )}
+          {d?.upcomingMaintenance?.length ? (
+            <div className="list">
+              {d.upcomingMaintenance.map(m => (
+                <div key={m._id} className="list-item">
+                  <span className="stat-icon" style={{ background: 'var(--info-bg)', color: 'var(--info)' }}><Wrench size={16} /></span>
+                  <div className="grow" style={{ minWidth: 0 }}>
+                    <div className="bold small ellipsis">{m.description}</div>
+                    <div className="tiny faint">{titleCase(m.type)}{m.assignedTo ? ` · ${m.assignedTo}` : ''}</div>
+                  </div>
+                  <span className="tiny bold muted">{formatDate(m.scheduledDate, { weekday: 'short', day: 'numeric', month: 'short' })}</span>
+                </div>
+              ))}
+            </div>
+          ) : !dash.loading && (
+            <EmptyState icon={CalendarClock} title="Nothing scheduled this week" />
+          )}
+        </Card>
       </div>
+
+      <Modal open={!!reminders} onClose={() => setReminders(null)} title="Rent reminders ready"
+        subtitle="Residents were notified in the app. Tap to send each one on WhatsApp too."
+        footer={<button className="btn btn-primary" onClick={() => setReminders(null)}>Done</button>}>
+        <div className="stack">
+          {reminders?.map((r, i) => (
+            <div key={i} className="card-soft row" style={{ padding: '10px 12px' }}>
+              <div className="grow" style={{ minWidth: 0 }}>
+                <div className="bold">{r.tenant} <span className="faint small">· Room {r.room}</span></div>
+                <div className="tiny muted">{inr(r.amount)} · <Badge status={r.status} /></div>
+              </div>
+              {r.whatsappLink
+                ? <a className="btn btn-whatsapp btn-sm" href={r.whatsappLink} target="_blank" rel="noreferrer"><Send size={14} />WhatsApp</a>
+                : <span className="tiny faint">No phone</span>}
+            </div>
+          ))}
+        </div>
+      </Modal>
     </div>
   );
 }

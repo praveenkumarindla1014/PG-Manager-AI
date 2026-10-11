@@ -62,7 +62,9 @@ const roomSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 // Virtual for vacancy count
+// (guarded: partial selects like populate('room', 'roomNumber') don't load these fields)
 roomSchema.virtual('vacancies').get(function() {
+  if (this.maxOccupants === undefined || !this.currentOccupants) return undefined;
   return this.maxOccupants - this.currentOccupants.length;
 });
 

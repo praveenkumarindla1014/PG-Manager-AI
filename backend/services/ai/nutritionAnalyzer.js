@@ -4,7 +4,7 @@
  */
 
 import { getCompletion } from './openaiClient.js';
-import Menu from '../../models/Menu.js';
+import { getMenuForDate } from '../menuService.js';
 
 /**
  * Analyze nutrition of menu items (Feature #8)
@@ -56,15 +56,7 @@ Return ONLY valid JSON array:
  */
 export async function getAIFoodRecommendation(dietaryNeed, restrictions = '') {
   try {
-    // Get today's menu
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    
-    const todayMenu = await Menu.findOne({
-      date: { $gte: today, $lt: tomorrow }
-    });
+    const todayMenu = await getMenuForDate(new Date());
     
     let menuContext = '';
     if (todayMenu) {
@@ -100,9 +92,9 @@ Provide recommendations in JSON:
 
     const result = await getCompletion(prompt, 'You are a nutrition advisor for an Indian PG hostel. Recommend from available menu items when possible.', {
       temperature: 0.5,
-      maxTokens: 800
+      maxTokens: 1200
     });
-    
+
     const jsonMatch = result.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('Invalid response');
     

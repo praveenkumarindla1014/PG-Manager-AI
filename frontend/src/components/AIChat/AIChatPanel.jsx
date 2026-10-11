@@ -1,275 +1,260 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Send, X, Sparkles, Maximize2, Minimize2, History, Plus, Volume2, VolumeX, Trash2, WifiOff, Bot, Copy, Check } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../services/api';
+import { firstName, formatTime, timeAgo } from '../../utils/format';
+import Markdown from './Markdown';
+import ChatCards from './ChatCards';
 import VoiceInput from './VoiceInput';
-import FunctionCallCard from './FunctionCallCard';
-import { Send, Bot, X, Sparkles, RefreshCw, Languages } from 'lucide-react';
 
-export default function AIChatPanel({ isOpen, onClose }) {
+const SESSION_KEY = 'pg_chat_session';
+
+const PROMPTS = {
+  owner: [
+    "How's my PG doing today?",
+    "Who hasn't paid rent?",
+    'Send rent reminders',
+    'Show open complaints',
+    "What's on my to-do list?",
+    'How many beds are vacant?',
+    'Expenses this month',
+    'Water cut tomorrow 10 to 2, make a notice'
+  ],
+  tenant: [
+    'Is my rent due?',
+    "What's for dinner tonight?",
+    'My room fan is not working',
+    'What time does the gate close?',
+    'Who is my roommate?',
+    'How do I pay rent?',
+    'High protein food today?',
+    'My friend is visiting at 5pm'
+  ]
+};
+
+const newSessionId = () => `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+
+function welcome(user) {
+  const name = firstName(user?.name);
+  return user?.role === 'owner'
+    ? `Hi ${name} 👋 I'm **PG Buddy**, your AI operations manager.\n\nI can check vacancies, chase rent, sort complaints, write notices, log expenses and more — just ask in plain words (English, Hindi, Telugu, Tamil or Kannada).`
+    : `Hi ${name} 👋 I'm **PG Buddy**, your helper at the PG.\n\nAsk me about your rent, today's menu, PG rules, or tell me if something in your room needs fixing — I'll log it for you right away.`;
+}
+
+export default function AIChatPanel({ open, onClose }) {
   const { user } = useAuth();
-  const [messages, setMessages] = useState([
-    {
-      role: 'assistant',
-      content: `Hello ${user?.name || 'there'}! 👋 I am your AI Virtual PG Manager.\n\nYou can ask me naturally or click any quick action below:\n• "How many rooms are empty?"\n• "How much income this month?"\n• "Who has not paid rent?"\n• "Which complaints are pending?"\n• "Show today's visitors"`,
-      timestamp: new Date()
-    }
-  ]);
+  const [sessionId, setSessionId] = useState(() => localStorage.getItem(SESSION_KEY) || newSessionId());
+  const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [isListening, setIsListening] = useState(false);
-  const [sessionId] = useState(() => 'session_' + Math.random().toString(36).substring(2, 9));
-  const messagesEndRef = useRef(null);
+  const [sending, setSending] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [sessions, setSessions] = useState([]);
+  const [speak, setSpeak] = useState(() => localStorage.getItem('pg_chat_speak') === '1');
+  const [offline, setOffline] = useState(false);
+  const [copied, setCopied] = useState(null);
+  const bodyRef = useRef(null);
+  const inputRef = useRef(null);
+  const loadedFor = useRef(null);
 
-  const isOwner = user?.role === 'owner';
+  const role = user?.role === 'owner' ? 'owner' : 'tenant';
 
-  const quickPrompts = isOwner ? [
-    "How many rooms are empty?",
-    "How much income this month?",
-    "Who has not paid rent?",
-    "Which complaints are pending?",
-    "Show today's visitors",
-    "Water problem tomorrow",
-    "Show rooms under ₹7000"
-  ] : [
-    "How much rent is due?",
-    "Show today's menu",
-    "My AC stopped working",
-    "Who is my roommate?",
-    "What facilities are available?",
-    "Need high protein diet"
-  ];
+  // Restore the current conversation when the panel first opens.
+  useEffect(() => {
+    if (!open || loadedFor.current === sessionId) return;
+    loadedFor.current = sessionId;
+    localStorage.setItem(SESSION_KEY, sessionId);
+    apiFetch(`/ai/history/${sessionId}`)
+      .then(res => {
+        const history = res.data.map(m => ({ role: m.role, content: m.content, cards: m.cards, timestamp: m.timestamp }));
+        // Keep anything sent while history was loading.
+        setMessages(prev => [...history, ...prev.filter(p => !history.some(h => h.role === p.role && h.content === p.content))]);
+      })
+      .catch(() => setMessages([]));
+  }, [open, sessionId]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, loading]);
+    bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: 'smooth' });
+  }, [messages, sending]);
 
-  const handleSend = async (textToSend) => {
-    const query = typeof textToSend === 'string' ? textToSend : input;
-    if (!query.trim() || loading) return;
+  useEffect(() => {
+    if (open) setTimeout(() => inputRef.current?.focus(), 150);
+  }, [open]);
 
-    const userMsg = { role: 'user', content: query, timestamp: new Date() };
-    setMessages(prev => [...prev, userMsg]);
+  // Other screens can open the panel with a question already asked.
+  const [queued, setQueued] = useState(null);
+  useEffect(() => {
+    const onAsk = (e) => e.detail?.message && setQueued(e.detail.message);
+    window.addEventListener('pg:open-ai', onAsk);
+    return () => window.removeEventListener('pg:open-ai', onAsk);
+  }, []);
+
+  const speakText = (text) => {
+    if (!speak || !window.speechSynthesis) return;
+    const clean = text.replace(/[*_`#|>-]/g, ' ').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/https?:\/\/\S+/g, '').slice(0, 600);
+    const u = new SpeechSynthesisUtterance(clean);
+    u.lang = /[ఀ-౿]/.test(clean) ? 'te-IN' : /[ऀ-ॿ]/.test(clean) ? 'hi-IN' : /[஀-௿]/.test(clean) ? 'ta-IN' : /[ಀ-೿]/.test(clean) ? 'kn-IN' : 'en-IN';
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(u);
+  };
+
+  const send = async (text) => {
+    const message = (text ?? input).trim();
+    if (!message || sending) return;
     setInput('');
-    setLoading(true);
-
+    setMessages(m => [...m, { role: 'user', content: message, timestamp: new Date() }]);
+    setSending(true);
     try {
-      const data = await apiFetch('/ai/chat', {
-        method: 'POST',
-        body: JSON.stringify({ message: query, sessionId })
-      });
-
-      const aiMsg = {
-        role: 'assistant',
-        content: data.response || 'I performed the requested action.',
-        functionsExecuted: data.functionsExecuted,
-        language: data.language,
-        timestamp: new Date()
-      };
-      setMessages(prev => [...prev, aiMsg]);
-    } catch (err) {
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: 'Action processed: ' + err.message,
-        timestamp: new Date()
-      }]);
+      const res = await apiFetch('/ai/chat', { method: 'POST', body: JSON.stringify({ message, sessionId }) });
+      setOffline(res.mode === 'offline');
+      setMessages(m => [...m, { role: 'assistant', content: res.response, cards: res.cards, functions: res.functionsExecuted, timestamp: new Date() }]);
+      speakText(res.response);
+      // Let pages refresh if the assistant changed something.
+      if (res.functionsExecuted?.length) window.dispatchEvent(new CustomEvent('pg:data-changed', { detail: res.functionsExecuted.map(f => f.name) }));
+    } catch (e) {
+      setMessages(m => [...m, { role: 'assistant', content: `Sorry — ${e.message}`, error: true, timestamp: new Date() }]);
     } finally {
-      setLoading(false);
+      setSending(false);
     }
   };
 
-  if (!isOpen) return null;
+  const startNew = () => {
+    const id = newSessionId();
+    loadedFor.current = id;
+    setSessionId(id);
+    localStorage.setItem(SESSION_KEY, id);
+    setMessages([]);
+    setShowHistory(false);
+  };
+
+  const openHistory = async () => {
+    setShowHistory(s => !s);
+    try { setSessions((await apiFetch('/ai/sessions')).data); } catch { setSessions([]); }
+  };
+
+  const deleteSession = async (id) => {
+    await apiFetch(`/ai/history/${id}`, { method: 'DELETE' }).catch(() => {});
+    setSessions(s => s.filter(x => x.sessionId !== id));
+    if (id === sessionId) startNew();
+  };
+
+  const copy = (text, i) => {
+    navigator.clipboard?.writeText(text);
+    setCopied(i);
+    setTimeout(() => setCopied(null), 1200);
+  };
+
+  useEffect(() => {
+    if (open && queued && !sending) {
+      setShowHistory(false);
+      send(queued);
+      setQueued(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, queued]);
+
+  if (!open) return null;
 
   return (
-    <div className="glass-card" style={{
-      position: 'fixed',
-      right: '1.5rem',
-      bottom: '1.5rem',
-      width: '420px',
-      height: '620px',
-      maxHeight: 'calc(100vh - 3rem)',
-      zIndex: 1000,
-      display: 'flex',
-      flexDirection: 'column',
-      borderRadius: 'var(--radius-lg)',
-      boxShadow: '0 20px 50px rgba(0,0,0,0.7)',
-      border: '1px solid rgba(99, 102, 241, 0.4)',
-      overflow: 'hidden'
-    }}>
-      {/* Header */}
-      <div style={{
-        padding: '1rem 1.25rem',
-        background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.3), rgba(139, 92, 246, 0.2))',
-        borderBottom: '1px solid var(--border-glass)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-          <div style={{
-            width: '32px',
-            height: '32px',
-            borderRadius: '50%',
-            background: 'var(--primary)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: 'var(--shadow-glow)'
-          }}>
-            <Bot size={18} color="white" />
-          </div>
-          <div>
-            <h3 style={{ fontSize: '0.95rem', fontWeight: '700' }}>AI PG Assistant</h3>
-            <span style={{ fontSize: '0.7rem', color: '#a5b4fc', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
-              <Sparkles size={10} /> Function Calling Active
-            </span>
+    <div className={`chat-panel ${expanded ? 'expanded' : ''}`} role="dialog" aria-label="AI assistant">
+      <div className="chat-head">
+        <div className="chat-avatar"><Sparkles size={20} /></div>
+        <div className="grow" style={{ minWidth: 0 }}>
+          <div className="bold">PG Buddy</div>
+          <div className="tiny row-sm ellipsis" style={{ opacity: 0.9, flexWrap: 'nowrap' }}>
+            {offline ? <><WifiOff size={11} /> Offline · basic answers</> : <><span className="pulse-dot" style={{ background: '#bbf7d0', flexShrink: 0 }} /> Online · 5 languages</>}
           </div>
         </div>
-        <button onClick={onClose} className="btn btn-secondary btn-icon" style={{ width: '30px', height: '30px' }}>
-          <X size={16} />
+        <button className="btn btn-ghost btn-icon btn-sm" onClick={() => { setSpeak(s => { localStorage.setItem('pg_chat_speak', s ? '0' : '1'); return !s; }); window.speechSynthesis?.cancel(); }} title={speak ? 'Stop reading replies aloud' : 'Read replies aloud'}>
+          {speak ? <Volume2 size={17} /> : <VolumeX size={17} />}
         </button>
+        <button className="btn btn-ghost btn-icon btn-sm" onClick={openHistory} title="Conversations"><History size={17} /></button>
+        <button className="btn btn-ghost btn-icon btn-sm" onClick={startNew} title="New chat"><Plus size={18} /></button>
+        <button className="btn btn-ghost btn-icon btn-sm desktop-only" onClick={() => setExpanded(e => !e)} title={expanded ? 'Shrink' : 'Expand'}>
+          {expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+        </button>
+        <button className="btn btn-ghost btn-icon btn-sm" onClick={onClose} title="Close"><X size={18} /></button>
       </div>
 
-      {/* Quick Prompts Bar */}
-      <div style={{
-        padding: '0.55rem 0.85rem',
-        background: 'rgba(0,0,0,0.25)',
-        borderBottom: '1px solid var(--border-glass)',
-        display: 'flex',
-        gap: '0.4rem',
-        overflowX: 'auto',
-        whiteSpace: 'nowrap'
-      }}>
-        {quickPrompts.map((prompt, idx) => (
-          <button
-            key={idx}
-            type="button"
-            onClick={() => handleSend(prompt)}
-            style={{
-              padding: '0.3rem 0.7rem',
-              fontSize: '0.75rem',
-              borderRadius: 'var(--radius-full)',
-              background: 'rgba(99, 102, 241, 0.15)',
-              border: '1px solid rgba(99, 102, 241, 0.3)',
-              color: '#a5b4fc',
-              cursor: 'pointer',
-              fontWeight: '600'
-            }}
-          >
-            {prompt}
-          </button>
-        ))}
-      </div>
-
-      {/* Messages Feed */}
-      <div style={{
-        flex: 1,
-        padding: '1rem',
-        overflowY: 'auto',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '0.85rem'
-      }}>
-        {messages.map((msg, idx) => (
-          <div
-            key={idx}
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start'
-            }}
-          >
-            <div style={{
-              maxWidth: '88%',
-              padding: '0.75rem 1rem',
-              borderRadius: msg.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-              background: msg.role === 'user' 
-                ? 'linear-gradient(135deg, var(--primary), var(--secondary))' 
-                : 'rgba(30, 41, 59, 0.85)',
-              border: msg.role === 'user' ? 'none' : '1px solid var(--border-glass)',
-              fontSize: '0.86rem',
-              lineHeight: '1.45',
-              whiteSpace: 'pre-wrap',
-              boxShadow: '0 4px 15px rgba(0,0,0,0.2)'
-            }}>
-              {/* Show Function Execution details */}
-              {msg.functionsExecuted && msg.functionsExecuted.map((fn, fIdx) => (
-                <FunctionCallCard key={fIdx} fn={fn} />
-              ))}
-
-              {msg.content}
+      {showHistory ? (
+        <div className="chat-body" style={{ gap: 8 }}>
+          <div className="row between">
+            <span className="bold">Your conversations</span>
+            <button className="btn btn-soft btn-sm" onClick={startNew}><Plus size={14} />New chat</button>
+          </div>
+          {!sessions.length && <div className="empty small">No saved conversations yet.</div>}
+          {sessions.map(s => (
+            <div key={s.sessionId} className="card row" style={{ padding: '10px 12px', borderColor: s.sessionId === sessionId ? 'var(--brand)' : undefined }}>
+              <button className="grow" style={{ background: 'none', border: 'none', textAlign: 'left', cursor: 'pointer', minWidth: 0 }}
+                onClick={() => { loadedFor.current = null; setSessionId(s.sessionId); setShowHistory(false); }}>
+                <div className="bold small ellipsis">{s.title}</div>
+                <div className="tiny faint">{timeAgo(s.lastActivity)} · {Math.ceil(s.messageCount / 2)} question{s.messageCount > 2 ? 's' : ''}</div>
+              </button>
+              <button className="btn btn-ghost btn-icon btn-xs" onClick={() => deleteSession(s.sessionId)} title="Delete"><Trash2 size={14} /></button>
             </div>
+          ))}
+        </div>
+      ) : (
+        <div className="chat-body" ref={bodyRef}>
+          <div className="msg msg-ai">
+            <div className="bubble"><Markdown text={welcome(user)} /></div>
+          </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.25rem' }}>
-              <span style={{ fontSize: '0.65rem', color: 'var(--text-subtle)' }}>
-                {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </span>
-              {msg.language && msg.language !== 'en' && (
-                <span className="badge badge-cyan" style={{ fontSize: '0.6rem', padding: '0.1rem 0.4rem' }}>
-                  <Languages size={8} /> {msg.language.toUpperCase()}
-                </span>
-              )}
+          {messages.map((m, i) => (
+            <div key={i} className={`msg ${m.role === 'user' ? 'msg-user' : 'msg-ai'}`}>
+              <div style={{ maxWidth: '100%', display: 'flex', flexDirection: 'column', alignItems: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
+                <div className="bubble" style={m.error ? { borderColor: 'var(--danger-border)', background: 'var(--danger-bg)' } : undefined}>
+                  {m.role === 'user' ? m.content : <Markdown text={m.content} />}
+                  {m.role !== 'user' && <ChatCards cards={m.cards} />}
+                </div>
+                <div className="msg-meta">
+                  {formatTime(m.timestamp)}
+                  {m.role !== 'user' && (
+                    <button className="btn btn-ghost btn-xs" style={{ height: 20, padding: '0 4px' }} onClick={() => copy(m.content, i)} title="Copy">
+                      {copied === i ? <Check size={12} /> : <Copy size={12} />}
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
 
-        {loading && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)', fontSize: '0.8rem', padding: '0.5rem' }}>
-            <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} />
-            <span>AI Manager querying database...</span>
-          </div>
-        )}
-        <div ref={messagesEndRef} />
-      </div>
+          {sending && (
+            <div className="msg msg-ai">
+              <div className="bubble" style={{ padding: 0 }}><div className="typing"><span /><span /><span /></div></div>
+            </div>
+          )}
 
-      {/* Voice Status indicator */}
-      {isListening && (
-        <div style={{
-          padding: '0.5rem',
-          background: 'rgba(244, 63, 94, 0.15)',
-          borderTop: '1px solid rgba(244, 63, 94, 0.4)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '0.5rem',
-          fontSize: '0.8rem',
-          color: '#fb7185'
-        }}>
-          <div className="voice-wave">
-            <span></span><span></span><span></span><span></span>
-          </div>
-          <span>Listening... speak your prompt!</span>
+          {!messages.length && !sending && (
+            <div className="stack-sm" style={{ marginTop: 4 }}>
+              <div className="tiny bold faint row-sm"><Bot size={13} />Try asking</div>
+              <div className="row wrap" style={{ gap: 6 }}>
+                {PROMPTS[role].map(p => <button key={p} className="chip" onClick={() => send(p)}>{p}</button>)}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Input Form */}
-      <form
-        onSubmit={(e) => { e.preventDefault(); handleSend(); }}
-        style={{
-          padding: '0.85rem',
-          background: 'rgba(15, 23, 42, 0.95)',
-          borderTop: '1px solid var(--border-glass)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.5rem'
-        }}
-      >
-        <VoiceInput
-          onSpeechResult={(transcript) => handleSend(transcript)}
-          isListening={isListening}
-          setIsListening={setIsListening}
-        />
+      {!showHistory && messages.length > 0 && (
+        <div className="chat-suggestions">
+          {PROMPTS[role].slice(0, 6).map(p => <button key={p} className="chip" style={{ height: 28, fontSize: '0.74rem' }} onClick={() => send(p)} disabled={sending}>{p}</button>)}
+        </div>
+      )}
 
-        <input
-          type="text"
-          className="form-input"
-          placeholder="Ask AI (e.g. 'How many rooms are empty?')..."
+      <form className="chat-input" onSubmit={e => { e.preventDefault(); send(); }}>
+        <VoiceInput disabled={sending} onInterim={setInput} onFinal={(t) => send(t)} />
+        <textarea
+          ref={inputRef}
+          rows={1}
           value={input}
-          onChange={(e) => setInput(e.target.value)}
-          style={{ height: '40px' }}
+          placeholder={role === 'owner' ? 'Ask or tell me to do something…' : 'Ask anything about your stay…'}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
+          aria-label="Message"
         />
-
-        <button type="submit" className="btn btn-primary btn-icon" style={{ width: '40px', height: '40px' }} disabled={loading}>
-          <Send size={16} />
+        <button type="submit" className="btn btn-primary btn-icon" style={{ height: 42, width: 42, borderRadius: 12 }} disabled={sending || !input.trim()} aria-label="Send">
+          <Send size={17} />
         </button>
       </form>
     </div>

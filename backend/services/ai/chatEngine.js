@@ -1,311 +1,322 @@
 /**
  * AI Chat Engine
- * 
- * Main orchestration: user message → context building → OpenAI with function calling → 
- * function execution → response generation.
- * Includes intelligent fallback parsing for offline/API-key fallback mode.
- * Implements chat memory (Feature #27) and multi-language support (Feature #28).
+ *
+ * user message → context (who, where, when, recent chat) → LLM with tool calling →
+ * tools run against the real database → friendly answer + structured "cards"
+ * the UI can render (rooms, payments, reminders…).
+ *
+ * If no AI provider is reachable, a rule-based intent engine answers instead,
+ * so the assistant keeps working offline.
  */
 
-import { callOpenAI } from './openaiClient.js';
+import { callOpenAI, isAIConfigured } from './openaiClient.js';
 import { getFunctionsByRole } from './functionRegistry.js';
 import { executeFunction } from './functionExecutor.js';
-import { detectLanguage, translateText } from './languageDetector.js';
+import { detectLanguage } from './languageDetector.js';
 import ChatHistory from '../../models/ChatHistory.js';
+import User from '../../models/User.js';
 import { v4 as uuidv4 } from 'uuid';
 
-const SYSTEM_PROMPTS = {
-  owner: `You are an AI-powered PG (Paying Guest) Management Assistant. You serve as a virtual PG manager for the OWNER.
+const PG_NAME = process.env.PG_NAME || 'SmartPG';
+const MAX_TOOL_ROUNDS = 6;
+const MAX_TOOL_RESULT_CHARS = 7000;
 
-Your capabilities:
-- Search and manage rooms, tenants, and payments
-- Analyze complaints and predict maintenance needs
-- Generate reports, notices, and communications
-- Provide business insights and revenue optimization
-- Track expenses and predict future costs
-- Detect fraud and risky tenants
-- Schedule maintenance and meetings
+function systemPrompt(user, role) {
+  const now = new Date();
+  const today = now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  const time = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+  const iso = now.toISOString().slice(0, 10);
+  const first = user?.name?.split(' ')[0] || 'there';
 
-Rules:
-- Always be professional, helpful, and proactive
-- When you have data, present it in a clear, structured format using tables or bullet points
-- If asked about something you can look up, USE THE FUNCTIONS to get real data — don't make up numbers
-- Provide actionable suggestions, not just data
-- Respond in the same language the user writes in`,
+  const shared = `
+Today is ${today}, ${time} (ISO date ${iso}). Convert relative dates ("tomorrow", "next Monday") using this.
 
-  tenant: `You are an AI-powered PG Assistant for TENANTS.
-Your capabilities: check rent, complaints, menu, roommate info, notices, rules.
-- Respond in the same language the user writes in`,
+How to talk:
+- Sound like a friendly, competent human manager — warm, natural, never robotic. Use the person's first name occasionally, not in every message.
+- Be concise: lead with the answer. Use short bullet lists or a small markdown table when listing several items. Bold key numbers.
+- Money is Indian Rupees: write ₹12,500 (Indian digit grouping).
+- ALWAYS use the tools to fetch real data. Never invent rooms, people, amounts or rules. If a tool fails, say so briefly and suggest a next step.
+- For actions that change data (recording payments, updating complaints, publishing notices, adding expenses, scheduling), just do it when the request is clear; confirm what you did in one line. If something essential is missing (which tenant? which date?), ask one short question.
+- If the user reports an emergency (fire, gas leak, medical, break-in), create the complaint immediately, then give clear safety steps and tell them to call 112.
+- Reply in the same language the user writes in (English, Hindi, Telugu, Tamil, Kannada, or Hinglish/mixed). Keep numbers and room numbers as digits.
+- Never mention "functions", "tools", "JSON" or internal IDs unless the owner asks.
+- End with a short helpful follow-up suggestion only when it genuinely helps.`;
 
-  visitor: `You are an AI-powered PG Information Assistant for VISITORS.`
-};
-
-/**
- * Fallback Intent Matcher when OpenAI API fails or is unconfigured
- */
-async function fallbackIntentExecution(message, userId, userRole, io) {
-  const msgLower = message.toLowerCase();
-  let fnName = null;
-  let fnArgs = {};
-
-  if (msgLower.includes('empty') || msgLower.includes('vacant') || msgLower.includes('available room')) {
-    fnName = 'get_empty_rooms';
-  } else if (msgLower.includes('income') || msgLower.includes('revenue') || msgLower.includes('earnings') || msgLower.includes('money collected')) {
-    fnName = 'get_income_report';
-    fnArgs = { period: 'this-month' };
-  } else if (msgLower.includes('not paid') || msgLower.includes('unpaid') || msgLower.includes('pending rent') || msgLower.includes('defaulter') || msgLower.includes('who hasn\'t paid')) {
-    fnName = 'get_unpaid_tenants';
-  } else if (msgLower.includes('complaint') || msgLower.includes('pending issue') || msgLower.includes('broken') || msgLower.includes('open issue')) {
-    fnName = 'get_pending_complaints';
-  } else if (msgLower.includes('visitor') || msgLower.includes('guest')) {
-    fnName = 'get_today_visitors';
-  } else if (msgLower.includes('menu') || msgLower.includes('food') || msgLower.includes('breakfast') || msgLower.includes('lunch') || msgLower.includes('dinner')) {
-    if (msgLower.includes('protein') || msgLower.includes('diet') || msgLower.includes('health') || msgLower.includes('recommend')) {
-      fnName = 'get_food_recommendation';
-      fnArgs = { dietaryNeed: message };
-    } else {
-      fnName = 'get_menu';
-    }
-  } else if (msgLower.includes('notice') || msgLower.includes('announcement') || msgLower.includes('water problem')) {
-    if (userRole === 'owner' && (msgLower.includes('create') || msgLower.includes('water problem') || msgLower.includes('tomorrow'))) {
-      fnName = 'generate_notice';
-      fnArgs = { rawInput: message, priority: 'medium', category: 'general' };
-    } else {
-      fnName = 'get_notices';
-    }
-  } else if (msgLower.includes('rent') || msgLower.includes('due date') || msgLower.includes('my payment')) {
-    fnName = 'get_rent_status';
-  } else if (msgLower.includes('roommate')) {
-    fnName = 'get_roommate_info';
-  } else if (msgLower.includes('facility') || msgLower.includes('amenities')) {
-    fnName = 'get_facilities';
-  } else if (msgLower.includes('room') || msgLower.includes('ac') || msgLower.includes('sharing') || msgLower.includes('floor') || msgLower.includes('under')) {
-    fnName = 'search_rooms';
-    if (msgLower.includes('ac')) fnArgs.hasAC = true;
-    if (msgLower.includes('7000')) fnArgs.maxRent = 7000;
-    if (msgLower.includes('5000')) fnArgs.maxRent = 5000;
-    if (msgLower.includes('6000')) fnArgs.maxRent = 6000;
-    if (msgLower.includes('8000')) fnArgs.maxRent = 8000;
-    if (msgLower.includes('triple')) fnArgs.type = 'triple';
-    if (msgLower.includes('double')) fnArgs.type = 'double';
-    if (msgLower.includes('single')) fnArgs.type = 'single';
-    if (msgLower.includes('second floor') || msgLower.includes('2nd floor')) fnArgs.floor = 2;
-    if (msgLower.includes('first floor') || msgLower.includes('1st floor')) fnArgs.floor = 1;
-    if (msgLower.includes('third floor') || msgLower.includes('3rd floor')) fnArgs.floor = 3;
-  } else if (msgLower.includes('todo') || msgLower.includes('to-do') || msgLower.includes('tasks')) {
-    fnName = 'get_smart_todo_list';
-  } else if (msgLower.includes('summary') || msgLower.includes('dashboard') || msgLower.includes('today')) {
-    fnName = 'get_daily_summary';
-  } else {
-    // Default search rooms or facilities
-    fnName = 'search_rooms';
+  if (role === 'owner') {
+    return `You are "PG Buddy", the AI operations manager for ${PG_NAME}, talking to the owner ${user?.name || ''}.
+You can see and act on everything: rooms & vacancy, tenants, rent collection, reminders, complaints, visitors, notices, food menu, maintenance, expenses, reports and forecasts.
+Be proactive: when you show a problem (unpaid rent, urgent complaint), offer the next action (e.g. "Want me to send WhatsApp reminders?").${shared}`;
   }
+  if (role === 'tenant') {
+    const room = user?.roomId?.roomNumber ? `They live in Room ${user.roomId.roomNumber} (floor ${user.roomId.floor}, rent ₹${user.roomId.rent?.toLocaleString('en-IN')}).` : 'They have no room assigned yet.';
+    return `You are "PG Buddy", the friendly AI assistant of ${PG_NAME}, helping resident ${user?.name || ''} (call them ${first}). ${room}
+You can help with: their rent status and how to pay, raising and tracking complaints, today's food menu and diet tips, notices, roommates, pre-registering visitors, and PG rules (use search_knowledge_base for any rule/policy question).
+You can only see this resident's own data — never reveal other residents' personal details or payments.${shared}`;
+  }
+  return `You are the friendly AI receptionist of ${PG_NAME}. Help visitors find rooms and learn about facilities and rules.${shared}`;
+}
 
-  const result = await executeFunction(fnName, fnArgs, { userId, userRole, io });
-  
-  let formattedText = result.message || 'Action executed successfully.';
-  if (result.data) {
-    if (Array.isArray(result.data)) {
-      if (result.data.length === 0) {
-        formattedText += ' No matching records found.';
-      } else {
-        formattedText += '\n\nHere are the details:\n' + result.data.slice(0, 5).map((item, idx) => {
-          if (item.roomNumber) return `• Room ${item.roomNumber} (${item.type || 'standard'}, ₹${item.rent}/mo, Floor ${item.floor})`;
-          if (item.name) return `• ${item.name} (${item.phone || item.email || item.role})`;
-          if (item.title) return `• ${item.title}: ${item.content}`;
-          if (item.description) return `• Issue: "${item.description}" [Status: ${item.status || 'open'}]`;
-          return `• Record ${idx + 1}: ${JSON.stringify(item).substring(0, 100)}`;
-        }).join('\n');
-      }
-    } else if (typeof result.data === 'object') {
-      if (result.data.totalIncome !== undefined) {
-        formattedText = `📊 Financial Report:\n• Total Income: ₹${(result.data.totalIncome || 0).toLocaleString('en-IN')}\n• Payments Received: ${result.data.paymentsReceived}\n• Pending Rent Amount: ₹${(result.data.pendingAmount || 0).toLocaleString('en-IN')} (${result.data.pendingCount} tenants pending)`;
-      } else if (result.data.occupancyRate !== undefined) {
-        formattedText = `📊 Daily Summary:\n• Occupancy: ${result.data.occupancyRate}%\n• Total Income Today: ₹${result.data.todayIncome}\n• Pending Complaints: ${result.data.pendingComplaints}\n• Visitors Today: ${result.data.todayVisitors}`;
-      }
+function truncateResult(result) {
+  const text = JSON.stringify(result);
+  if (text.length <= MAX_TOOL_RESULT_CHARS) return text;
+  // Keep the message/summary and as many data rows as fit.
+  if (Array.isArray(result.data)) {
+    const rows = [];
+    let size = 200;
+    for (const row of result.data) {
+      const s = JSON.stringify(row).length;
+      if (size + s > MAX_TOOL_RESULT_CHARS) break;
+      rows.push(row);
+      size += s;
+    }
+    return JSON.stringify({ ...result, data: rows, note: `Showing ${rows.length} of ${result.data.length} records.` });
+  }
+  return text.slice(0, MAX_TOOL_RESULT_CHARS) + '…';
+}
+
+function safeParseArgs(raw) {
+  if (!raw) return {};
+  if (typeof raw === 'object') return raw;
+  try { return JSON.parse(raw); } catch { return {}; }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Offline intent engine                                              */
+/* ------------------------------------------------------------------ */
+
+const inr = (n) => `₹${Math.round(n || 0).toLocaleString('en-IN')}`;
+
+function detectIntent(message, role) {
+  const m = ` ${message.toLowerCase()} `;
+  const has = (...words) => words.some(w => m.includes(w));
+  const budget = m.match(/(?:under|below|less than|within|upto|up to|₹|rs\.?|inr)\s*₹?\s*(\d{4,5})/);
+
+  if (role === 'owner') {
+    const paid = message.match(/^\s*([a-z]+(?:\s+[a-z]+)?)\s+(?:has\s+|just\s+)?paid\b(?:[^\d]*(\d{3,6}))?/i);
+    if (paid && !/^(who|has|have|which|how)\b/i.test(paid[1])) {
+      const method = ['upi', 'cash', 'card'].find(x => m.includes(x)) || (has('bank', 'neft', 'imps', 'transfer') ? 'bank-transfer' : 'cash');
+      return ['record_payment', { tenantName: paid[1], ...(paid[2] && { amount: Number(paid[2]) }), method }];
     }
   }
+  if (has('fire', 'gas leak', 'smoke', 'emergency', 'unconscious', 'theft', 'intruder', 'not working', 'broken', 'leak', 'complain', 'issue with', 'problem with', 'stopped',
+    'pani cheyatledu', 'pani cheyyatledu', 'cheyatledu', 'raavatledu', 'ravatledu', 'kaam nahi', 'kharab', 'band ho', 'nahi chal', 'not cooling', 'no water', 'dirty', 'cockroach')
+      && !has('pending complaint', 'open complaint', 'show complaint', 'list complaint', 'which complaint')) {
+    return ['create_complaint', { description: message }];
+  }
+  if (role === 'owner') {
+    if (has('remind')) return ['send_rent_reminders', {}];
+    if (has('not paid', 'unpaid', 'pending rent', 'defaulter', "hasn't paid", 'havent paid', "haven't paid", 'due list')) return ['get_unpaid_tenants', {}];
+    if (has('income', 'revenue', 'earning', 'collected', 'collection')) return ['get_income_report', { period: has('today') ? 'today' : has('last month') ? 'last-month' : 'this-month' }];
+    if (has('expense', 'spent', 'spending', 'cost')) return ['get_expense_summary', {}];
+    if (has('to-do', 'todo', 'to do', 'tasks', 'what should i do')) return ['get_smart_todo_list', {}];
+    if (has('visitor', 'guest')) return ['get_today_visitors', {}];
+    if (has('complaint', 'issues', 'pending issue')) return ['get_pending_complaints', {}];
+    if (has('risky', 'risk', 'late payer', 'violation')) return ['get_risky_tenants', {}];
+    if (has('predict', 'forecast')) return ['get_rent_prediction', {}];
+    if (has('report')) return ['generate_monthly_report', {}];
+    if (has('notice', 'announce') && has('create', 'make', 'write', 'publish', 'post', 'tomorrow')) return ['generate_notice', { rawInput: message }];
+    if (has('summary', 'dashboard', 'how is', "how's", 'overview', 'status of pg', 'today')) return ['get_dashboard_stats', {}];
+  }
+  if (has('empty', 'vacant', 'vacancy', 'free bed', 'available room')) return ['get_empty_rooms', {}];
+  if (has('menu', 'food', 'breakfast', 'lunch', 'dinner', 'snack', 'eat')) {
+    if (has('protein', 'diet', 'weight', 'healthy', 'recommend', 'gym')) return ['get_food_recommendation', { dietaryNeed: message }];
+    const day = ['tomorrow', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'].find(d => m.includes(d));
+    const meal = ['breakfast', 'lunch', 'snacks', 'dinner'].find(x => m.includes(x.replace('snacks', 'snack')));
+    return ['get_menu', { ...(day && { day }), ...(meal && { meal }) }];
+  }
+  if (has('rent', 'due', 'my payment', 'pay ')) return role === 'owner' ? ['get_unpaid_tenants', {}] : ['get_rent_status', {}];
+  if (has('upi', 'how to pay', 'bank')) return ['get_payment_info', {}];
+  if (has('roommate', 'room mate')) return ['get_roommate_info', {}];
+  if (has('my complaint', 'complaint status')) return ['get_complaints_by_tenant', {}];
+  if (has('notice', 'announcement')) return ['get_notices', {}];
+  if (has('facilit', 'amenit', 'wifi', 'laundry')) return ['get_facilities', {}];
+  if (has('rule', 'policy', 'allowed', 'timing', 'gate', 'deposit', 'notice period', 'smok', 'alcohol', 'late fee', 'parking')) return ['search_knowledge_base', { query: message }];
+  if (has('room', ' ac ', 'sharing', 'single', 'double', 'triple', 'floor') || budget) {
+    const args = {};
+    if (budget) args.maxRent = Number(budget[1]);
+    if (has(' ac ', ' ac,', 'air condition')) args.hasAC = true;
+    if (has('non ac', 'non-ac')) args.hasAC = false;
+    for (const t of ['single', 'double', 'triple']) if (m.includes(t)) args.type = t;
+    const floor = m.match(/(\d)(?:st|nd|rd|th)? floor/) || (m.includes('first floor') && ['', '1']) || (m.includes('second floor') && ['', '2']) || (m.includes('third floor') && ['', '3']);
+    if (floor) args.floor = Number(floor[1]);
+    if (has('girl', 'female', 'women', 'ladies')) args.genderPreference = 'female';
+    if (has('boy', 'male', ' men ', 'gents')) args.genderPreference = 'male';
+    return ['search_rooms', args];
+  }
+  return [null, {}];
+}
 
+function formatOffline(fnName, result, role) {
+  if (!result.success) return result.message || "I couldn't complete that just now.";
+  const d = result.data;
+  switch (fnName) {
+    case 'search_rooms':
+    case 'get_empty_rooms':
+      if (!d?.length) return result.message;
+      return `${result.message}\n\n| Room | Type | Rent | Free beds | Features |\n|---|---|---|---|---|\n` +
+        d.slice(0, 8).map(r => `| ${r.roomNumber} | ${r.type} | ${inr(r.rent)} | ${r.freeBeds} | ${r.features.slice(0, 3).join(', ')} |`).join('\n');
+    case 'get_unpaid_tenants':
+      if (!d?.length) return result.message;
+      return `${result.message}\n\n` + d.map(p => `• **${p.tenant}** (Room ${p.room}) — ${inr(p.amount)} · ${p.status}${p.daysOverdue ? `, ${p.daysOverdue} days` : ''}`).join('\n') + '\n\nSay **"send reminders"** and I\'ll prepare WhatsApp messages for all of them.';
+    case 'get_rent_status': {
+      const t = d.thisMonth;
+      return t.status === 'paid'
+        ? `You're all set ✅ — rent of **${inr(t.amount)}** for this month is paid.`
+        : `Your rent of **${inr(t.amount)}** for this month is **${t.status === 'overdue' ? 'overdue' : 'due on the 5th'}**. You can pay by UPI — ask me "how to pay" for details.`;
+    }
+    case 'get_menu': {
+      const meals = ['breakfast', 'lunch', 'snacks', 'dinner'].filter(m => d[m]);
+      return `🍽️ **Menu for ${d.day}**\n\n` + meals.map(m => `**${m[0].toUpperCase() + m.slice(1)}** (${d[m].timing || ''})\n${d[m].items.map(i => `• ${i}`).join('\n')}`).join('\n\n');
+    }
+    case 'create_complaint':
+      return d.isEmergency
+        ? `🚨 **Emergency alert raised.** The owner has been notified right now.\n\n${d.emergencySteps?.immediateAction || 'Move to a safe place.'}\n\nCall **112** if anyone is in danger.`
+        : `Got it — I've logged your complaint. ✅\n\n• Category: **${d.category}**\n• Priority: **${d.priority}**\n• Expected fix: **${d.estimatedResolution}**\n\n${d.replyToTenant || ''}`;
+    case 'get_dashboard_stats':
+    case 'get_income_report':
+    case 'generate_monthly_report':
+      return (result.message ? `${result.message}\n\n` : '📊 Here\'s the snapshot:\n\n') +
+        Object.entries(d).filter(([, v]) => typeof v !== 'object').map(([k, v]) => `• ${k.replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase())}: **${typeof v === 'number' && v > 999 ? inr(v) : v}**`).join('\n');
+    case 'get_smart_todo_list':
+      return d.length ? `Here's your to-do list for today:\n\n${d.map((t, i) => `${i + 1}. ${t.task}`).join('\n')}` : 'Nothing urgent today. 🎉';
+    case 'get_pending_complaints':
+      return d.length ? `${result.message}\n\n${d.slice(0, 10).map(c => `• Room ${c.room || '?'} — ${c.issue} (**${c.priority}**, ${c.status})`).join('\n')}` : 'No open complaints right now. 🎉';
+    case 'send_rent_reminders':
+      return `${result.message}\n\n${(d || []).map(r => `• **${r.tenant}** (Room ${r.room}) — ${inr(r.amount)}`).join('\n')}`;
+    case 'search_knowledge_base':
+      return d.answer;
+    case 'get_notices':
+      return d.length ? d.map(n => `📢 **${n.title}**\n${n.content}`).join('\n\n') : 'No notices right now.';
+    case 'get_roommate_info':
+    case 'get_payment_info':
+    case 'get_facilities':
+      return result.message || Object.entries(d).map(([k, v]) => `• ${k.replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase())}: ${Array.isArray(v) ? v.map(x => x.name || x).join(', ') || '—' : v}`).join('\n');
+    default:
+      return result.message || 'Done ✅';
+  }
+}
+
+async function offlineAnswer(message, ctx) {
+  const [fnName, args] = detectIntent(message, ctx.userRole);
+  if (!fnName) {
+    const hints = ctx.userRole === 'owner'
+      ? '• "How many rooms are empty?"\n• "Who hasn\'t paid rent?"\n• "Send rent reminders"\n• "Show pending complaints"\n• "Today\'s summary"'
+      : '• "Is my rent due?"\n• "What\'s for dinner?"\n• "My fan is not working"\n• "What time does the gate close?"';
+    return {
+      response: `I'm running in offline mode right now, so I understand simpler requests best. Try:\n\n${hints}`,
+      functionsExecuted: [],
+      cards: []
+    };
+  }
+  const result = await executeFunction(fnName, args, ctx);
   return {
-    functionsExecuted: [{ name: fnName, args: fnArgs, success: result.success }],
-    response: formattedText,
-    data: result.data
+    response: formatOffline(fnName, result, ctx.userRole),
+    functionsExecuted: [{ name: fnName, args, success: result.success }],
+    cards: result.display && result.success ? [{ type: result.display, name: fnName, data: result.data }] : []
   };
 }
 
-/**
- * Process a chat message through the AI pipeline
- */
+/* ------------------------------------------------------------------ */
+/*  Main pipeline                                                      */
+/* ------------------------------------------------------------------ */
+
 export async function processMessage(message, userId, userRole, sessionId = null, io = null) {
-  try {
-    if (!sessionId) sessionId = uuidv4();
-    
-    // Detect language (Feature #28)
-    const detectedLang = await detectLanguage(message).catch(() => 'en');
-    
-    // Get chat history for context (Feature #27)
-    let chatHistory = await ChatHistory.findOne({
-      userId,
-      sessionId,
-      isActive: true
-    }).catch(() => null);
-    
-    if (!chatHistory) {
-      try {
-        chatHistory = await ChatHistory.create({
-          userId,
-          role: userRole,
-          sessionId,
-          messages: [],
-          detectedLanguage: detectedLang,
-          context: {}
-        });
-      } catch (e) {
-        console.warn('Chat history creation notice:', e.message);
-      }
-    }
-    
-    let finalResponse = '';
-    let executedFunctions = [];
-    let responseData = null;
+  sessionId = sessionId || uuidv4();
+  const ctx = { userId, userRole, io };
+  const language = await detectLanguage(message).catch(() => 'en');
 
-    // Try OpenAI Function Calling first
-    try {
-      const messages = [
-        { role: 'system', content: SYSTEM_PROMPTS[userRole] || SYSTEM_PROMPTS.visitor }
-      ];
-      
-      if (chatHistory && chatHistory.messages) {
-        const recentMessages = chatHistory.messages.slice(-6);
-        for (const msg of recentMessages) {
-          if (msg.role !== 'function' && msg.role !== 'tool') {
-            messages.push({ role: msg.role, content: msg.content });
-          }
-        }
-      }
-      
-      messages.push({ role: 'user', content: message });
-      const functions = getFunctionsByRole(userRole);
-      
-      let response = await callOpenAI(messages, functions, 'auto');
-      let assistantMessage = response.choices[0].message;
-      
-      let iterations = 0;
-      const MAX_ITERATIONS = 5;
-      
-      while (assistantMessage.tool_calls && iterations < MAX_ITERATIONS) {
-        iterations++;
-        messages.push(assistantMessage);
-        
-        for (const toolCall of assistantMessage.tool_calls) {
-          const functionName = toolCall.function.name;
-          const functionArgs = JSON.parse(toolCall.function.arguments);
-          
-          console.log(`🔧 AI Executing function: ${functionName}`, functionArgs);
-          
-          const result = await executeFunction(functionName, functionArgs, {
-            userId,
-            userRole,
-            io
-          });
-          
-          executedFunctions.push({
-            name: functionName,
-            args: functionArgs,
-            success: result.success,
-            result: result
-          });
+  const [user, history] = await Promise.all([
+    User.findById(userId).select('name roomId role').populate('roomId', 'roomNumber floor rent type'),
+    ChatHistory.findOne({ userId, sessionId, isActive: true })
+  ]);
 
-          responseData = result.data || responseData;
-          
-          messages.push({
-            role: 'tool',
-            tool_call_id: toolCall.id,
-            content: JSON.stringify(result)
-          });
-        }
-        
-        response = await callOpenAI(messages, functions, 'auto');
-        assistantMessage = response.choices[0].message;
-      }
-      
-      finalResponse = assistantMessage.content || 'I performed the requested action successfully.';
-
-    } catch (openAiError) {
-      console.warn('⚡ OpenAI Call failed or invalid key, switching to Smart Intent Engine:', openAiError.message);
-      
-      // Execute smart fallback intent parsing
-      const fallbackResult = await fallbackIntentExecution(message, userId, userRole, io);
-      finalResponse = fallbackResult.response;
-      executedFunctions = fallbackResult.functionsExecuted;
-      responseData = fallbackResult.data;
-    }
-
-    // Multi-language translation if needed
-    if (detectedLang && detectedLang !== 'en') {
-      try {
-        finalResponse = await translateText(finalResponse, detectedLang);
-      } catch (e) {
-        console.warn('Translation fallback notice:', e.message);
-      }
-    }
-    
-    // Save to chat history (Feature #27)
-    if (chatHistory && chatHistory.messages) {
-      chatHistory.messages.push(
-        { role: 'user', content: message, timestamp: new Date() },
-        { role: 'assistant', content: finalResponse, timestamp: new Date() }
-      );
-      chatHistory.detectedLanguage = detectedLang;
-      chatHistory.lastActivity = new Date();
-      if (chatHistory.messages.length > 50) {
-        chatHistory.messages = chatHistory.messages.slice(-50);
-      }
-      await chatHistory.save().catch(() => {});
-    }
-    
-    return {
-      success: true,
-      response: finalResponse,
-      sessionId,
-      language: detectedLang,
-      functionsExecuted: executedFunctions.map(f => ({
-        name: f.name,
-        args: f.args,
-        success: f.success
-      })),
-      data: responseData
-    };
-    
-  } catch (error) {
-    console.error('Chat engine critical error:', error);
-    // Last-resort fallback to ensure the user NEVER sees an error message
-    const fallback = await fallbackIntentExecution(message, userId, userRole, io);
-    return {
-      success: true,
-      response: fallback.response,
-      sessionId: sessionId || uuidv4(),
-      language: 'en',
-      functionsExecuted: fallback.functionsExecuted,
-      data: fallback.data
-    };
+  let chat = history;
+  if (!chat) {
+    chat = new ChatHistory({ userId, role: userRole, sessionId, messages: [], detectedLanguage: language, title: message.slice(0, 60) });
   }
+
+  let response = '';
+  let functionsExecuted = [];
+  let cards = [];
+  let mode = 'ai';
+
+  if (isAIConfigured()) {
+    try {
+      const messages = [{ role: 'system', content: systemPrompt(user, userRole) }];
+      for (const m of chat.messages.slice(-12)) {
+        if (m.role === 'user' || m.role === 'assistant') messages.push({ role: m.role, content: m.content || '' });
+      }
+      messages.push({ role: 'user', content: message });
+
+      const tools = getFunctionsByRole(userRole);
+      let reply = (await callOpenAI(messages, tools, 'auto', { temperature: 0.4 })).choices[0].message;
+
+      for (let round = 0; reply.tool_calls?.length && round < MAX_TOOL_ROUNDS; round++) {
+        // Push the assistant turn back verbatim (Gemini needs its thought signatures).
+        messages.push(reply);
+        for (const call of reply.tool_calls) {
+          const name = call.function.name;
+          const args = safeParseArgs(call.function.arguments);
+          console.log(`🔧 ${userRole} → ${name}`, JSON.stringify(args));
+          const result = await executeFunction(name, args, ctx);
+          functionsExecuted.push({ name, args, success: !!result.success });
+          if (result.display && result.success) cards.push({ type: result.display, name, data: result.data });
+          messages.push({ role: 'tool', tool_call_id: call.id, content: truncateResult(result) });
+        }
+        reply = (await callOpenAI(messages, tools, 'auto', { temperature: 0.4 })).choices[0].message;
+      }
+
+      response = reply.content?.trim() || (functionsExecuted.length ? 'Done ✅' : "Sorry, I didn't quite get that — could you rephrase?");
+    } catch (error) {
+      console.warn('⚡ AI unavailable, using offline intent engine:', error.message);
+      mode = 'offline';
+    }
+  } else {
+    mode = 'offline';
+  }
+
+  if (mode === 'offline') {
+    const offline = await offlineAnswer(message, ctx);
+    response = offline.response;
+    functionsExecuted = offline.functionsExecuted;
+    cards = offline.cards;
+  }
+
+  // Keep only the last card of each type so the UI isn't cluttered.
+  const seen = new Set();
+  cards = cards.reverse().filter(c => !seen.has(c.type) && seen.add(c.type)).reverse();
+
+  chat.messages.push(
+    { role: 'user', content: message, timestamp: new Date() },
+    { role: 'assistant', content: response, timestamp: new Date(), cards, functionsExecuted }
+  );
+  if (chat.messages.length > 60) chat.messages = chat.messages.slice(-60);
+  chat.detectedLanguage = language;
+  chat.lastActivity = new Date();
+  await chat.save().catch(e => console.warn('Chat history save failed:', e.message));
+
+  return { success: true, response, sessionId, language, mode, functionsExecuted, cards };
 }
 
-/**
- * Clear chat history for a session
- */
 export async function clearChatHistory(userId, sessionId) {
-  await ChatHistory.updateOne(
-    { userId, sessionId },
-    { $set: { isActive: false } }
-  ).catch(() => {});
+  await ChatHistory.updateOne({ userId, sessionId }, { $set: { isActive: false } }).catch(() => {});
 }
 
-/**
- * Get chat history
- */
 export async function getChatHistory(userId, sessionId) {
-  const history = await ChatHistory.findOne({ userId, sessionId, isActive: true }).catch(() => null);
+  const history = await ChatHistory.findOne({ userId, sessionId, isActive: true }).lean().catch(() => null);
   return history?.messages || [];
+}
+
+export async function listSessions(userId) {
+  return ChatHistory.find({ userId, isActive: true })
+    .select('sessionId title lastActivity messages')
+    .sort({ lastActivity: -1 })
+    .limit(20)
+    .lean()
+    .then(rows => rows.map(r => ({
+      sessionId: r.sessionId,
+      title: r.title || r.messages?.find(m => m.role === 'user')?.content?.slice(0, 60) || 'Conversation',
+      lastActivity: r.lastActivity,
+      messageCount: r.messages?.length || 0
+    })));
 }

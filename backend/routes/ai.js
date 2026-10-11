@@ -1,49 +1,45 @@
 import express from 'express';
-import { processMessage, clearChatHistory, getChatHistory } from '../services/ai/chatEngine.js';
+import { processMessage, clearChatHistory, getChatHistory, listSessions } from '../services/ai/chatEngine.js';
+import { getAIStatus } from '../services/ai/openaiClient.js';
 import { protect } from '../middleware/auth.js';
+import { ah, httpError } from '../utils/http.js';
 
 const router = express.Router();
 
-// @route   POST /api/ai/chat
-// @desc    Main AI chat endpoint — the heart of the system
-router.post('/chat', protect, async (req, res) => {
-  try {
-    const { message, sessionId } = req.body;
-    
-    if (!message) {
-      return res.status(400).json({ success: false, message: 'Message is required' });
-    }
-    
-    const io = req.app.get('io');
-    const result = await processMessage(message, req.user._id, req.user.role, sessionId, io);
-    
-    res.json(result);
-  } catch (error) {
-    console.error('AI chat error:', error);
-    res.status(500).json({ success: false, message: 'AI processing failed', error: error.message });
-  }
-});
+// Simple per-user rate limit so a stuck client can't burn through the AI quota.
+const recent = new Map();
+function rateLimit(req, res, next) {
+  const key = String(req.user._id);
+  const now = Date.now();
+  const hits = (recent.get(key) || []).filter(t => now - t < 60_000);
+  if (hits.length >= 30) return res.status(429).json({ success: false, message: "You're sending messages very fast — please wait a few seconds." });
+  hits.push(now);
+  recent.set(key, hits);
+  next();
+}
 
-// @route   GET /api/ai/history/:sessionId
-// @desc    Get chat history for a session
-router.get('/history/:sessionId', protect, async (req, res) => {
-  try {
-    const messages = await getChatHistory(req.user._id, req.params.sessionId);
-    res.json({ success: true, data: messages });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
+// POST /api/ai/chat — the assistant
+router.post('/chat', protect, rateLimit, ah(async (req, res) => {
+  const message = String(req.body.message || '').trim();
+  if (!message) throw httpError(400, 'Message is required');
+  if (message.length > 2000) throw httpError(400, 'Message is too long (max 2000 characters)');
+  const result = await processMessage(message, req.user._id, req.user.role, req.body.sessionId, req.app.get('io'));
+  res.json(result);
+}));
 
-// @route   DELETE /api/ai/history/:sessionId
-// @desc    Clear chat history
-router.delete('/history/:sessionId', protect, async (req, res) => {
-  try {
-    await clearChatHistory(req.user._id, req.params.sessionId);
-    res.json({ success: true, message: 'Chat history cleared' });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
+router.get('/status', protect, (req, res) => res.json({ success: true, data: getAIStatus() }));
+
+router.get('/sessions', protect, ah(async (req, res) => {
+  res.json({ success: true, data: await listSessions(req.user._id) });
+}));
+
+router.get('/history/:sessionId', protect, ah(async (req, res) => {
+  res.json({ success: true, data: await getChatHistory(req.user._id, req.params.sessionId) });
+}));
+
+router.delete('/history/:sessionId', protect, ah(async (req, res) => {
+  await clearChatHistory(req.user._id, req.params.sessionId);
+  res.json({ success: true, message: 'Conversation deleted' });
+}));
 
 export default router;

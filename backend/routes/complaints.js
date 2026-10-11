@@ -1,133 +1,87 @@
 import express from 'express';
 import Complaint from '../models/Complaint.js';
-import Room from '../models/Room.js';
-import User from '../models/User.js';
 import { protect, isOwner } from '../middleware/auth.js';
-import { analyzeComplaint, detectDuplicateComplaint } from '../services/ai/complaintAnalyzer.js';
+import { createComplaintRecord } from '../services/complaintService.js';
+import { notify } from '../services/notify.js';
+import { ah, pick, httpError } from '../utils/http.js';
 
 const router = express.Router();
 
 // GET /api/complaints
-router.get('/', protect, async (req, res) => {
-  try {
-    const query = {};
-    if (req.query.status) query.status = req.query.status;
-    if (req.query.category) query.aiCategory = req.query.category;
-    
-    // Only filter by tenant if tenant role is requesting
-    if (req.user.role === 'tenant') {
-      query.tenant = req.user._id;
-    }
+router.get('/', protect, ah(async (req, res) => {
+  const query = {};
+  if (req.query.status) query.status = req.query.status;
+  if (req.query.category) query.aiCategory = req.query.category;
+  if (req.query.priority) query.aiPriority = req.query.priority;
+  if (req.user.role !== 'owner') query.tenant = req.user._id;
 
-    const complaints = await Complaint.find(query)
-      .populate('tenant', 'name phone email')
-      .populate('room', 'roomNumber floor')
-      .sort({ urgencyScore: -1, createdAt: -1 });
+  const complaints = await Complaint.find(query)
+    .populate('tenant', 'name phone email')
+    .populate('room', 'roomNumber floor')
+    .sort({ createdAt: -1 })
+    .limit(300);
+  res.json({ success: true, data: complaints, count: complaints.length });
+}));
 
-    res.json({ success: true, data: complaints, count: complaints.length });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+// POST /api/complaints — AI analyses, de-duplicates and escalates
+router.post('/', protect, ah(async (req, res) => {
+  const result = await createComplaintRecord({
+    userId: req.user._id,
+    description: req.body.description,
+    roomNumber: req.body.roomNumber,
+    io: req.app.get('io')
+  });
+  if (!result.success) throw httpError(400, result.message);
+  res.status(201).json({ success: true, data: result.complaint, emergencySteps: result.analysis.emergencySteps });
+}));
+
+// PUT /api/complaints/:id — owner updates status / assignment / reply
+router.put('/:id', protect, isOwner, ah(async (req, res) => {
+  const complaint = await Complaint.findById(req.params.id);
+  if (!complaint) throw httpError(404, 'Complaint not found');
+  const before = complaint.status;
+  Object.assign(complaint, pick(req.body, ['status', 'assignedTo', 'ownerResponse', 'aiPriority', 'aiCategory']));
+  if (['resolved', 'closed'].includes(complaint.status) && !complaint.resolvedDate) complaint.resolvedDate = new Date();
+  await complaint.save();
+
+  // Resolve linked duplicates together with their master ticket.
+  if (complaint.status !== before && ['resolved', 'closed'].includes(complaint.status) && complaint.linkedComplaints?.length) {
+    await Complaint.updateMany({ _id: { $in: complaint.linkedComplaints } }, { status: complaint.status, resolvedDate: new Date() });
   }
-});
 
-// POST /api/complaints
-router.post('/', protect, async (req, res) => {
-  try {
-    const { description, roomId } = req.body;
-    
-    if (!description || !description.trim()) {
-      return res.status(400).json({ success: false, message: 'Complaint description is required' });
-    }
-
-    // Determine room: passed roomId -> user's assigned roomId -> first available room as fallback
-    let targetRoomId = roomId || req.user.roomId;
-    if (!targetRoomId) {
-      const anyRoom = await Room.findOne();
-      targetRoomId = anyRoom?._id || null;
-    }
-
-    // AI Analysis
-    let analysis;
-    try {
-      analysis = await analyzeComplaint(description);
-    } catch (err) {
-      analysis = {
-        category: 'cleaning',
-        priority: 'medium',
-        estimatedTime: '4 Hours',
-        suggestedStaff: 'Cleaning Staff',
-        generatedReply: 'Issue recorded. Our team will resolve it soon.',
-        sentiment: 'neutral',
-        emoji: '😐',
-        urgencyScore: 5,
-        isEmergency: false,
-        emergencyType: null
-      };
-    }
-
-    let duplicate = { isDuplicate: false };
-    try {
-      duplicate = await detectDuplicateComplaint(description, targetRoomId);
-    } catch (err) {
-      console.warn('Duplicate detection notice:', err.message);
-    }
-
-    const complaint = await Complaint.create({
-      tenant: req.user._id,
-      room: targetRoomId,
-      description: description.trim(),
-      aiCategory: analysis.category || 'cleaning',
-      aiPriority: analysis.priority || 'medium',
-      aiEstimatedTime: analysis.estimatedTime || '4 Hours',
-      aiSuggestedStaff: analysis.suggestedStaff || 'Cleaning Staff',
-      aiGeneratedReply: analysis.generatedReply || 'Complaint received and scheduled for resolution.',
-      aiSentiment: analysis.sentiment || 'neutral',
-      sentimentEmoji: analysis.emoji || '😐',
-      urgencyScore: analysis.urgencyScore || 5,
-      isEmergency: !!analysis.isEmergency,
-      emergencyType: analysis.emergencyType || null,
-      isDuplicate: !!duplicate.isDuplicate,
-      masterComplaintId: duplicate.masterComplaintId || null
+  const populated = await Complaint.findById(complaint._id).populate('tenant', 'name phone email').populate('room', 'roomNumber floor');
+  const io = req.app.get('io');
+  if (complaint.status !== before || req.body.ownerResponse) {
+    const label = { 'in-progress': 'is being worked on 🔧', resolved: 'has been resolved ✅', closed: 'was closed', open: 'was reopened' }[complaint.status];
+    await notify(io, {
+      audience: 'user', recipient: complaint.tenant, type: 'complaint',
+      title: `Your complaint ${label || 'was updated'}`,
+      message: req.body.ownerResponse || complaint.description.slice(0, 100),
+      link: '/complaints'
     });
-
-    const populatedComplaint = await Complaint.findById(complaint._id)
-      .populate('tenant', 'name phone email')
-      .populate('room', 'roomNumber floor');
-
-    // Notify via Socket.IO
-    const io = req.app.get('io');
-    if (io) {
-      io.emit('new-complaint', {
-        message: `📋 New complaint from ${req.user.name}: "${description}"`,
-        complaint: populatedComplaint
-      });
-
-      if (analysis.isEmergency) {
-        io.emit('emergency', {
-          type: analysis.emergencyType || 'general',
-          complaint: populatedComplaint,
-          message: `🚨 EMERGENCY ALERT: ${description}`
-        });
-      }
-    }
-
-    res.status(201).json({ success: true, data: populatedComplaint });
-  } catch (error) {
-    console.error('Create complaint error:', error);
-    res.status(500).json({ success: false, message: error.message });
   }
-});
+  io?.to('owners').to(`user-${complaint.tenant}`).emit('complaint-updated', { complaint: populated });
+  res.json({ success: true, data: populated });
+}));
 
-// PUT /api/complaints/:id
-router.put('/:id', protect, isOwner, async (req, res) => {
-  try {
-    const complaint = await Complaint.findByIdAndUpdate(req.params.id, req.body, { new: true })
-      .populate('tenant', 'name phone email')
-      .populate('room', 'roomNumber floor');
-    res.json({ success: true, data: complaint });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+// POST /api/complaints/:id/feedback — tenant rates the fix
+router.post('/:id/feedback', protect, ah(async (req, res) => {
+  const complaint = await Complaint.findOne({ _id: req.params.id, tenant: req.user._id });
+  if (!complaint) throw httpError(404, 'Complaint not found');
+  const rating = Math.max(1, Math.min(5, Number(req.body.rating) || 0));
+  if (!rating) throw httpError(400, 'Rating 1–5 required');
+  complaint.rating = rating;
+  complaint.feedback = String(req.body.feedback || '').slice(0, 300);
+  if (req.body.reopen) complaint.status = 'open';
+  await complaint.save();
+  if (req.body.reopen || rating <= 2) {
+    await notify(req.app.get('io'), {
+      audience: 'owner', type: 'complaint',
+      title: req.body.reopen ? `${req.user.name} reopened a complaint` : `Low rating (${rating}★) on a fixed complaint`,
+      message: complaint.feedback || complaint.description.slice(0, 100), link: '/complaints'
+    });
   }
-});
+  res.json({ success: true, data: await complaint.populate([{ path: 'tenant', select: 'name phone email' }, { path: 'room', select: 'roomNumber floor' }]) });
+}));
 
 export default router;

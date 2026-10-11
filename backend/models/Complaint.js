@@ -50,7 +50,11 @@ const complaintSchema = new mongoose.Schema({
   images: [{ type: String }],
   
   // Response
-  ownerResponse: { type: String }
+  ownerResponse: { type: String },
+
+  // Tenant feedback after the fix
+  rating: { type: Number, min: 1, max: 5 },
+  feedback: { type: String }
   
 }, { timestamps: true });
 

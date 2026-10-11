@@ -6,7 +6,35 @@
  * - Expense prediction
  */
 
-import { getCompletion } from './openaiClient.js';
+import { getCompletion, parseJSON } from './openaiClient.js';
+
+const MAINTENANCE_COST = { 'ac-cooling': 2500, electrical: 800, plumbing: 900, 'pest-control': 3000, furniture: 1200, 'wifi-internet': 1500, 'water-supply': 1500, cleaning: 500 };
+
+// Recurring complaints in the same room/category are a strong signal of an upcoming failure.
+function ruleBasedMaintenance(roomComplaints) {
+  const predictions = [];
+  for (const [roomNumber, cats] of Object.entries(roomComplaints)) {
+    for (const [type, count] of Object.entries(cats)) {
+      if (count < 2 || !MAINTENANCE_COST[type]) continue;
+      predictions.push({
+        roomNumber,
+        type,
+        probability: Math.min(90, 40 + count * 15),
+        estimatedDate: new Date(Date.now() + 21 * 86400000).toISOString().slice(0, 10),
+        estimatedCost: MAINTENANCE_COST[type],
+        reason: `${count} ${type.replace('-', ' ')} complaints from this room in the last year`
+      });
+    }
+  }
+  return {
+    predictions: predictions.sort((a, b) => b.probability - a.probability),
+    generalRecommendations: [
+      'Service all AC units before summer (every 3–4 months).',
+      'Schedule pest control every quarter for kitchen and pantry.',
+      'Clean the overhead water tank every 6 months.'
+    ]
+  };
+}
 import User from '../../models/User.js';
 import Room from '../../models/Room.js';
 import Payment from '../../models/Payment.js';
@@ -40,8 +68,8 @@ export async function predictRentPayments() {
     });
     
     const predictions = tenants.map(tenant => {
-      const history = tenantPaymentData[tenant._id.toString()] || [];
-      const lateCount = history.filter(h => h.daysLate > 0).length;
+      const history = (tenantPaymentData[tenant._id.toString()] || []).filter(h => h.status !== 'pending');
+      const lateCount = history.filter(h => h.daysLate > 0 || h.status === 'overdue').length;
       const totalPayments = history.length || 1;
       const avgDaysLate = history.reduce((s, h) => s + h.daysLate, 0) / totalPayments;
       const lateProbability = Math.min(100, Math.round((lateCount / totalPayments) * 100));
@@ -168,12 +196,17 @@ Return JSON:
   "generalRecommendations": ["recommendation 1", "recommendation 2"]
 }`;
 
-    const result = await getCompletion(prompt, 'You are a maintenance prediction AI for property management.', {
-      temperature: 0.3
-    });
-    
-    const jsonMatch = result.match(/\{[\s\S]*\}/);
-    return jsonMatch ? JSON.parse(jsonMatch[0]) : { predictions: [], generalRecommendations: [] };
+    const baseline = ruleBasedMaintenance(roomComplaints);
+    if (!Object.keys(roomComplaints).length) return baseline;
+    try {
+      const result = await getCompletion(prompt, 'You are a maintenance prediction AI for property management in India. Costs in INR. JSON only.', {
+        temperature: 0.3
+      });
+      const parsed = parseJSON(result);
+      return parsed.predictions?.length ? parsed : baseline;
+    } catch {
+      return baseline;
+    }
   } catch (error) {
     console.error('Maintenance prediction error:', error);
     return { predictions: [], generalRecommendations: [] };

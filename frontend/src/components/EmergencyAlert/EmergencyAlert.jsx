@@ -1,92 +1,95 @@
-import React from 'react';
-import { ShieldAlert, AlertTriangle, PhoneCall, X } from 'lucide-react';
+import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { ShieldAlert, PhoneCall, X, MapPin } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { useLive } from '../../context/AppContext';
+import { titleCase, timeAgo } from '../../utils/format';
 
-export default function EmergencyAlert({ emergencyData, onClose }) {
-  if (!emergencyData) return null;
+const DEFAULT_STEPS = {
+  immediateAction: 'Move everyone to a safe place and contact emergency services if anyone is at risk.',
+  contacts: ['Emergency: 112']
+};
 
-  return (
-    <div style={{
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      width: '100vw',
-      height: '100vh',
-      backgroundColor: 'rgba(11, 15, 25, 0.95)',
-      backdropFilter: 'blur(16px)',
-      zIndex: 9999,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: '2rem'
-    }}>
-      <div className="glass-card emergency-active" style={{
-        maxWidth: '520px',
-        width: '100%',
-        padding: '2rem',
-        borderRadius: 'var(--radius-lg)',
-        border: '1px solid #f43f5e',
-        boxShadow: '0 10px 40px rgba(244, 63, 94, 0.3)'
-      }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.25rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <div style={{
-              width: '44px',
-              height: '44px',
-              borderRadius: '50%',
-              background: '#f43f5e',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}>
-              <ShieldAlert size={24} color="white" />
-            </div>
-            <div>
-              <h2 style={{ fontSize: '1.25rem', color: '#f43f5e', fontWeight: '800' }}>
-                EMERGENCY ALERT
-              </h2>
-              <span className="badge badge-danger">Immediate Action Needed</span>
+export default function EmergencyAlert() {
+  const live = useLive();
+  const navigate = useNavigate();
+  const data = live?.emergency;
+
+  // Audible alert so the owner notices even if the tab is in the background.
+  useEffect(() => {
+    if (!data) return;
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      [0, 0.35, 0.7].forEach(t => {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.frequency.value = 880;
+        o.connect(g);
+        g.connect(ctx.destination);
+        g.gain.setValueAtTime(0.15, ctx.currentTime + t);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.3);
+        o.start(ctx.currentTime + t);
+        o.stop(ctx.currentTime + t + 0.3);
+      });
+    } catch { /* audio not allowed */ }
+  }, [data]);
+
+  if (!data) return null;
+  const steps = data.steps || DEFAULT_STEPS;
+  const close = () => live.setEmergency(null);
+  const contacts = steps.contacts || [];
+
+  return createPortal(
+    <div className="overlay emergency-overlay">
+      <div className="modal emergency-card" role="alertdialog" aria-modal="true">
+        <div style={{ background: 'var(--danger)', color: '#fff', padding: '20px 22px', display: 'flex', gap: 14, alignItems: 'center' }}>
+          <div style={{ width: 48, height: 48, borderRadius: 14, background: 'rgba(255,255,255,0.2)', display: 'grid', placeItems: 'center' }}>
+            <ShieldAlert size={26} />
+          </div>
+          <div className="grow">
+            <div className="tiny bold" style={{ letterSpacing: '0.1em', opacity: 0.9 }}>EMERGENCY ALERT · {titleCase(data.type || 'general')}</div>
+            <div className="display" style={{ fontSize: '1.35rem' }}>Immediate attention needed</div>
+          </div>
+          <button className="btn btn-icon btn-sm" style={{ background: 'rgba(255,255,255,0.18)', color: '#fff' }} onClick={close} aria-label="Dismiss"><X size={18} /></button>
+        </div>
+        <div className="modal-body stack">
+          <div className="callout callout-danger">
+            <div className="stack-sm">
+              <div className="bold">{data.complaint?.description || data.message}</div>
+              <div className="small muted row-sm wrap">
+                <MapPin size={14} />
+                {data.complaint?.room?.roomNumber ? `Room ${data.complaint.room.roomNumber}` : 'Building'}
+                {data.complaint?.tenant?.name && <> · reported by {data.complaint.tenant.name}</>}
+                {data.complaint?.createdAt && <> · {timeAgo(data.complaint.createdAt)}</>}
+              </div>
             </div>
           </div>
-          <button onClick={onClose} className="btn btn-secondary btn-icon" style={{ width: '32px', height: '32px' }}>
-            <X size={16} />
-          </button>
+          <div>
+            <div className="label" style={{ marginBottom: 6 }}>What to do right now</div>
+            <p style={{ fontWeight: 600 }}>{steps.immediateAction}</p>
+          </div>
+          <div className="row wrap">
+            {(contacts.length ? contacts : ['Emergency: 112']).map(c => {
+              const num = c.match(/\d{3,}/)?.[0];
+              return (
+                <a key={c} href={num ? `tel:${num}` : undefined} className="btn btn-danger" style={{ flex: '1 1 160px' }}>
+                  <PhoneCall size={16} />{c}
+                </a>
+              );
+            })}
+            {data.complaint?.tenant?.phone && (
+              <a href={`tel:${data.complaint.tenant.phone}`} className="btn btn-secondary" style={{ flex: '1 1 160px' }}>
+                <PhoneCall size={16} />Call {data.complaint.tenant.name.split(' ')[0]}
+              </a>
+            )}
+          </div>
         </div>
-
-        <div style={{
-          background: 'rgba(0,0,0,0.4)',
-          padding: '1rem 1.25rem',
-          borderRadius: 'var(--radius-sm)',
-          borderLeft: '4px solid #f43f5e',
-          marginBottom: '1.25rem'
-        }}>
-          <p style={{ fontSize: '0.95rem', fontWeight: '700', color: '#f8fafc', marginBottom: '0.3rem' }}>
-            {emergencyData.message || 'Emergency Issue Reported'}
-          </p>
-          <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-            Room: {emergencyData.complaint?.room?.roomNumber || 'Building'} | Category: {emergencyData.type}
-          </p>
-        </div>
-
-        <div style={{ marginBottom: '1.5rem' }}>
-          <h4 style={{ fontSize: '0.88rem', color: '#fb7185', marginBottom: '0.4rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-            <AlertTriangle size={15} /> Safety Protocol:
-          </h4>
-          <ul style={{ paddingLeft: '1.25rem', fontSize: '0.85rem', color: 'var(--text-main)', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-            <li>Evacuate building floor immediately if gas leak or fire.</li>
-            <li>Do not operate light switches or open flames.</li>
-            <li>Emergency notifications dispatches sent to staff.</li>
-          </ul>
-        </div>
-
-        <div style={{ display: 'flex', gap: '0.75rem' }}>
-          <a href="tel:112" className="btn btn-danger" style={{ flex: 1, textDecoration: 'none' }}>
-            <PhoneCall size={16} /> Call Emergency (112)
-          </a>
-          <button onClick={onClose} className="btn btn-secondary" style={{ flex: 1 }}>
-            Dismiss Alert
-          </button>
+        <div className="modal-footer">
+          <button className="btn btn-secondary" onClick={close}>Dismiss</button>
+          <button className="btn btn-primary" onClick={() => { close(); navigate('/complaints'); }}>Open complaint</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

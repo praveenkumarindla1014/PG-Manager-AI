@@ -4,7 +4,16 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/build_icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PG Manager™ - AI-First PG Management System</title>
+    <meta name="theme-color" content="#c8174f" />
+    <meta name="description" content="PG Manager — AI-first PG & hostel management: rent, rooms, complaints, menus and visitors with an assistant that speaks 5 Indian languages." />
+    <title>PG Manager · AI-first PG & Hostel Management</title>
+    <script>
+      // Apply the saved theme before first paint to avoid a flash.
+      try {
+        var t = localStorage.getItem('pg_theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

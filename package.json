@@ -1,0 +1,13 @@
+{
+  "name": "pg-manager-ai",
+  "private": true,
+  "version": "2.0.0",
+  "description": "AI-first PG & hostel management — React + Express + MongoDB",
+  "scripts": {
+    "setup": "npm install --prefix backend && npm install --prefix frontend",
+    "dev": "node scripts/dev.mjs",
+    "seed": "npm run seed --prefix backend",
+    "build": "npm run build --prefix frontend",
+    "start": "npm run build && node backend/server.js --serve-frontend"
+  }
+}

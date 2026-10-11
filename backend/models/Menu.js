@@ -51,6 +51,7 @@ const menuSchema = new mongoose.Schema({
   
 }, { timestamps: true });
 
-menuSchema.index({ date: 1 }, { unique: true });
+// One menu per weekday; the menu repeats weekly.
+menuSchema.index({ dayOfWeek: 1 });
 
 export default mongoose.model('Menu', menuSchema);

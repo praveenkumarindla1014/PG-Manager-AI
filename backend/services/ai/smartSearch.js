@@ -9,6 +9,21 @@ import Room from '../../models/Room.js';
 import Payment from '../../models/Payment.js';
 import Complaint from '../../models/Complaint.js';
 
+// Only plain query operators are allowed — no server-side JavaScript.
+const BLOCKED_OPERATORS = new Set(['$where', '$function', '$accumulator', '$expr', '$jsonSchema']);
+function sanitizeFilter(value) {
+  if (Array.isArray(value)) return value.map(sanitizeFilter);
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (BLOCKED_OPERATORS.has(k) || k.includes('password')) continue;
+      out[k] = sanitizeFilter(v);
+    }
+    return out;
+  }
+  return value;
+}
+
 export async function convertToQuery(naturalQuery, entityType = null) {
   try {
     const prompt = `Convert this natural language query into a MongoDB query for a PG management system.
@@ -47,11 +62,13 @@ Return ONLY valid JSON:
       return { results: [], explanation: 'Could not determine which data to search' };
     }
     
-    let query = Model.find(queryPlan.filter);
+    let query = Model.find(sanitizeFilter(queryPlan.filter || {}));
+    if (Model === User) query = query.select('-password -aadhaarImage -selfieImage -aadhaarNumber -extractedAadhaarData');
     
     if (queryPlan.populate) {
-      for (const pop of queryPlan.populate) {
-        query = query.populate(pop);
+      const allowed = { tenant: 'name phone', room: 'roomNumber floor', roomId: 'roomNumber floor rent', currentOccupants: 'name' };
+      for (const pop of [].concat(queryPlan.populate)) {
+        if (allowed[pop]) query = query.populate(pop, allowed[pop]);
       }
     }
     
@@ -59,7 +76,7 @@ Return ONLY valid JSON:
       query = query.sort(queryPlan.sort);
     }
     
-    const results = await query.limit(50).lean();
+    const results = await query.limit(30).lean();
     
     return {
       results,

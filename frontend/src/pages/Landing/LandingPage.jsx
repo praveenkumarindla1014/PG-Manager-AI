@@ -1,340 +1,247 @@
 import React from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { 
-  Building2, 
-  Smartphone, 
-  Cloud, 
-  Globe, 
-  Users, 
-  UserCheck, 
-  TrendingUp, 
-  IndianRupee, 
-  FileText, 
-  BarChart3, 
-  Bot, 
-  ChevronRight, 
-  LogIn, 
-  UserPlus, 
-  ShieldCheck, 
-  CheckCircle,
-  Sparkles,
-  Home
+import { Link } from 'react-router-dom';
+import {
+  Building2, Sparkles, Wallet, MessageSquareWarning, UtensilsCrossed, DoorOpen, BarChart3, Megaphone,
+  Languages, Mic, ShieldAlert, ArrowRight, Check, Star, BedDouble, Moon, Sun
 } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
+import { useTheme } from '../../context/AppContext';
+
+const FEATURES = [
+  { icon: Sparkles, title: 'An AI manager that actually does things', text: 'Ask "who hasn\'t paid?" and it lists them — then sends polite WhatsApp reminders when you say so.', tone: 'brand' },
+  { icon: Wallet, title: 'Rent on autopilot', text: 'Monthly dues are created automatically, late fees calculated, UPI payments confirmed in one tap.', tone: 'success' },
+  { icon: MessageSquareWarning, title: 'Complaints sorted in seconds', text: 'Every issue is categorised, prioritised and routed — duplicates grouped, emergencies escalated instantly.', tone: 'warning' },
+  { icon: UtensilsCrossed, title: 'Menus residents love', text: 'Weekly menu with nutrition, plus personal diet tips for gym-goers, students and everyone between.', tone: 'teal' },
+  { icon: DoorOpen, title: 'Visitor gate log', text: 'Residents pre-register guests; you approve at the gate. Everyone knows who\'s in the building.', tone: 'info' },
+  { icon: BarChart3, title: 'Know your numbers', text: 'Live occupancy, collections, expenses and profit — with a one-click monthly PDF report.', tone: 'violet' }
+];
+
+const CHAT = [
+  { from: 'user', text: 'naa room lo fan pani cheyatledu 😓' },
+  { from: 'ai', text: 'అయ్యో! Room 102 fan complaint register చేశాను ✅ Electrician 4 గంటల్లో వస్తారు.' },
+  { from: 'user', text: "Who hasn't paid rent this month?" },
+  { from: 'ai', text: '3 residents — ₹15,000 pending. Rahul (102), Suresh (104) and Meera (304). Want me to send WhatsApp reminders?' }
+];
+
+const toneColor = {
+  brand: ['var(--brand-50)', 'var(--brand)'], success: ['var(--success-bg)', 'var(--success)'], warning: ['var(--warning-bg)', 'var(--warning)'],
+  teal: ['var(--teal-bg)', 'var(--teal)'], info: ['var(--info-bg)', 'var(--info)'], violet: ['var(--violet-bg)', 'var(--violet)']
+};
 
 export default function LandingPage() {
-  const navigate = useNavigate();
+  const { user } = useAuth();
+  const { theme, toggleTheme } = useTheme();
+  const appLink = user ? (user.role === 'owner' ? '/owner-dashboard' : '/tenant-dashboard') : '/login';
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f8fafc', color: '#0f172a' }}>
-      {/* Top Header Navigation (PG Manager Style) */}
-      <header style={{
-        background: '#ffffff',
-        borderBottom: '1px solid #e2e8f0',
-        padding: '0.85rem 3rem',
-        position: 'sticky',
-        top: 0,
-        zIndex: 100,
-        boxShadow: '0 2px 10px rgba(0,0,0,0.03)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between'
-      }}>
-        {/* Brand Logo using build_icon.png */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer' }} onClick={() => navigate('/')}>
-          <img src="/build_icon.png" alt="PG Manager Logo" style={{ width: '38px', height: '38px', objectFit: 'contain' }} />
-          <span style={{ fontSize: '1.4rem', fontWeight: '800', color: '#0f172a', letterSpacing: '-0.02em' }}>
-            PG Manager<sup style={{ fontSize: '0.65rem', color: 'var(--primary)' }}>TM</sup>
-          </span>
-        </div>
+    <div style={{ background: 'var(--bg)', minHeight: '100vh' }}>
+      <style>{`
+        .lp-wrap { max-width: 1200px; margin: 0 auto; padding: 0 24px; }
+        .lp-hero { display: grid; grid-template-columns: 1.05fr 1fr; gap: 48px; align-items: center; padding: 56px 0 72px; }
+        .lp-h1 { font-family: var(--font-display); font-size: clamp(2.4rem, 5vw, 3.9rem); line-height: 1.04; letter-spacing: -0.035em; font-weight: 600; }
+        .lp-h2 { font-family: var(--font-display); font-size: clamp(1.8rem, 3.4vw, 2.6rem); line-height: 1.1; letter-spacing: -0.03em; font-weight: 600; }
+        .lp-collage { position: relative; height: 520px; }
+        .lp-collage img { position: absolute; object-fit: cover; border-radius: 22px; box-shadow: var(--shadow-lg); }
+        .lp-section { padding: 72px 0; }
+        .lp-nav-links a { color: var(--ink-2); font-weight: 600; font-size: 0.9rem; }
+        .lp-nav-links a:hover { color: var(--ink); text-decoration: none; }
+        @media (max-width: 920px) {
+          .lp-hero { grid-template-columns: 1fr; padding-top: 32px; }
+          .lp-collage { height: 380px; }
+          .lp-nav-links { display: none !important; }
+        }
+      `}</style>
 
-        {/* Navigation Links */}
-        <nav style={{ display: 'flex', gap: '2rem', alignItems: 'center', fontWeight: '600', fontSize: '0.9rem', color: '#475569' }}>
-          <a href="#home" style={{ color: 'var(--primary)', textDecoration: 'none' }}>Home</a>
-          <a href="#services" style={{ color: 'inherit', textDecoration: 'none' }}>Our Services</a>
-          <a href="#features" style={{ color: 'inherit', textDecoration: 'none' }}>Features</a>
-          <a href="#gallery" style={{ color: 'inherit', textDecoration: 'none' }}>Property Gallery</a>
-          <a href="#ai-portal" style={{ color: 'inherit', textDecoration: 'none' }}>AI Portal</a>
-        </nav>
-
-        {/* Action Buttons */}
-        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-          <Link to="/register" className="btn btn-primary" style={{ padding: '0.55rem 1.1rem', fontSize: '0.85rem' }}>
-            <UserPlus size={16} /> Register
+      {/* Nav */}
+      <header style={{ position: 'sticky', top: 0, zIndex: 20, background: 'color-mix(in srgb, var(--bg) 85%, transparent)', backdropFilter: 'blur(10px)', borderBottom: '1px solid var(--border)' }}>
+        <div className="lp-wrap row lp-nav" style={{ height: 68 }}>
+          <Link to="/" className="row" style={{ color: 'inherit', textDecoration: 'none' }}>
+            <span className="brand-mark"><Building2 size={20} /></span>
+            <span className="brand-name">PG Manager</span>
           </Link>
-          <Link to="/login" className="btn btn-secondary" style={{ padding: '0.55rem 1.1rem', fontSize: '0.85rem', borderColor: '#d0124e', color: '#d0124e' }}>
-            <LogIn size={16} /> Login
-          </Link>
+          <nav className="row lp-nav-links" style={{ gap: 28, marginLeft: 40 }}>
+            <a href="#features">Features</a>
+            <a href="#assistant">AI assistant</a>
+            <a href="#rooms">Rooms</a>
+            <a href="#faq">Why us</a>
+          </nav>
+          <div className="row right">
+            <button className="btn btn-ghost btn-icon" onClick={toggleTheme} aria-label="Toggle theme">{theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}</button>
+            {user ? (
+              <Link to={appLink} className="btn btn-primary">Open dashboard <ArrowRight size={16} /></Link>
+            ) : (
+              <>
+                <Link to="/login" className="btn btn-ghost">Sign in</Link>
+                <Link to="/register" className="btn btn-primary">Get started</Link>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
-      {/* Hero Section with Parallax Background */}
-      <section id="home" className="hero-parallax-bg" style={{
-        position: 'relative',
-        padding: '5.5rem 2rem',
-        background: `linear-gradient(rgba(15, 23, 42, 0.75), rgba(15, 23, 42, 0.85)), url("/images/pg_1.webp")`,
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-        color: '#ffffff',
-        textAlign: 'center',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        minHeight: '520px'
-      }}>
-        <div style={{ maxWidth: '850px' }}>
-          <span className="badge badge-primary" style={{ background: 'rgba(208, 18, 78, 0.25)', color: '#ffffff', padding: '0.4rem 1rem', marginBottom: '1.25rem', border: '1px solid rgba(255,255,255,0.3)' }}>
-            <Sparkles size={14} /> AI-Powered Paying Guest Management Software
+      {/* Hero */}
+      <section className="lp-wrap lp-hero">
+        <div className="stack-lg">
+          <span className="badge tone-brand" style={{ alignSelf: 'flex-start', height: 30, padding: '0 14px', fontSize: '0.78rem' }}>
+            <Sparkles size={14} /> Your PG, managed by AI — in 5 Indian languages
           </span>
-
-          <h1 style={{ fontSize: '3rem', fontWeight: '800', marginBottom: '1rem', letterSpacing: '-0.02em', textShadow: '0 2px 10px rgba(0,0,0,0.5)', lineHeight: '1.2' }}>
-            You think your PG is well managed? <br />
-            <span style={{ color: '#f43f5e', textDecoration: 'underline' }}>Think again!</span>
+          <h1 className="lp-h1">
+            The calm way to run a <span style={{ color: 'var(--brand)', fontStyle: 'italic' }}>paying guest</span> home.
           </h1>
-
-          <p style={{ fontSize: '1.1rem', color: '#e2e8f0', maxWidth: '680px', margin: '0 auto 2.25rem auto', lineHeight: '1.6' }}>
-            About 87% of PG owners still follow manual bookkeeping to manage their PGs. SmartPG AI automates occupancy, rent collection, inmate check-ins, and complaint resolution 24/7.
+          <p className="muted" style={{ fontSize: '1.12rem', maxWidth: 540 }}>
+            Rent, rooms, complaints, menus and visitors in one warm, simple app — with an assistant that chases payments, fixes problems and answers residents at 2 AM so you don't have to.
           </p>
+          <div className="row wrap">
+            <Link to={appLink} className="btn btn-primary btn-lg">{user ? 'Go to my dashboard' : 'Try the live demo'} <ArrowRight size={18} /></Link>
+            {!user && <Link to="/register" className="btn btn-secondary btn-lg">I'm a resident</Link>}
+          </div>
+          <div className="row wrap small muted" style={{ gap: 18 }}>
+            {['No spreadsheets', 'WhatsApp reminders', 'Works on any phone'].map(t => (
+              <span key={t} className="row-sm bold"><Check size={16} className="text-success" />{t}</span>
+            ))}
+          </div>
+        </div>
 
-          <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
-            <Link to="/login" className="btn btn-primary" style={{ padding: '0.85rem 2rem', fontSize: '1rem', background: '#d0124e', borderColor: '#d0124e' }}>
-              <ChevronRight size={18} /> LEARN MORE & DEMO
-            </Link>
-            <Link to="/register" className="btn btn-secondary" style={{ padding: '0.85rem 2rem', fontSize: '1rem' }}>
-              GET STARTED FREE
-            </Link>
+        <div className="lp-collage">
+          <img src="/images/pg_2.avif" alt="Bright twin-sharing room" style={{ width: '62%', height: '64%', right: 0, top: 0, animation: 'float 7s ease-in-out infinite' }} />
+          <img src="/images/pg_3.avif" alt="Common area" style={{ width: '48%', height: '46%', left: 0, bottom: 20, animation: 'float 8s ease-in-out infinite 0.8s' }} />
+          <div className="card" style={{ position: 'absolute', left: '6%', top: '8%', width: 250, padding: 14, boxShadow: 'var(--shadow-lg)', animation: 'float 6s ease-in-out infinite 0.4s' }}>
+            <div className="row-sm tiny bold faint"><Sparkles size={13} className="text-brand" />PG Buddy · just now</div>
+            <p className="small mt-2" style={{ fontWeight: 600 }}>Good morning Rajesh ☀️ ₹54,500 collected this month. 3 rents pending — shall I remind them?</p>
+          </div>
+          <div className="card row" style={{ position: 'absolute', right: '4%', bottom: '4%', padding: '12px 16px', boxShadow: 'var(--shadow-lg)', gap: 12 }}>
+            <span className="stat-icon" style={{ background: 'var(--success-bg)', color: 'var(--success)' }}><BedDouble size={18} /></span>
+            <span>
+              <span className="bold" style={{ display: 'block' }}>87% occupied</span>
+              <span className="tiny faint">13 beds free · 3 floors</span>
+            </span>
           </div>
         </div>
       </section>
 
-      {/* Services Section */}
-      <section id="services" style={{ padding: '4.5rem 3rem', background: '#ffffff', textAlign: 'center' }}>
-        <h2 style={{ fontSize: '2rem', fontWeight: '800', color: '#0f172a', letterSpacing: '-0.02em' }}>
-          OUR <span style={{ color: 'var(--primary)', fontWeight: '300' }}>SERVICES</span>
-        </h2>
-        <div style={{ width: '50px', height: '4px', background: 'var(--primary)', margin: '0.75rem auto 1rem auto', borderRadius: '2px' }}></div>
-        <p style={{ color: '#64748b', fontSize: '0.95rem', maxWidth: '600px', margin: '0 auto 3rem auto' }}>
-          We provide a better and efficient way to manage your PGs remotely. With both web and automated mobile applications, PG Manager™ is the best application.
-        </p>
-
-        <div className="grid-3" style={{ maxWidth: '1100px', margin: '0 auto' }}>
-          <div className="glass-card" style={{ padding: '2rem', textAlign: 'center', background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 4px 20px rgba(0,0,0,0.04)' }}>
-            <div className="icon-box-crimson" style={{ margin: '0 auto 1.25rem auto' }}>
-              <Smartphone size={32} />
+      {/* Stats strip */}
+      <section style={{ borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}>
+        <div className="lp-wrap grid-4" style={{ padding: '28px 24px' }}>
+          {[['35+', 'AI features built in'], ['5', 'languages understood'], ['< 5s', 'to log a complaint'], ['24/7', 'resident help desk']].map(([v, l]) => (
+            <div key={l} style={{ textAlign: 'center' }}>
+              <div className="display" style={{ fontSize: '2rem', color: 'var(--brand)' }}>{v}</div>
+              <div className="small muted bold">{l}</div>
             </div>
-            <h3 style={{ fontSize: '1.15rem', fontWeight: '700', marginBottom: '0.5rem' }}>Android Application</h3>
-            <p style={{ color: '#64748b', fontSize: '0.88rem', lineHeight: '1.5' }}>
-              Manage your PG with fingertips anywhere, anytime with our native mobile application support.
-            </p>
-          </div>
-
-          <div className="glass-card" style={{ padding: '2rem', textAlign: 'center', background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 4px 20px rgba(0,0,0,0.04)' }}>
-            <div className="icon-box-crimson" style={{ margin: '0 auto 1.25rem auto' }}>
-              <Globe size={32} />
-            </div>
-            <h3 style={{ fontSize: '1.15rem', fontWeight: '700', marginBottom: '0.5rem' }}>Web Application</h3>
-            <p style={{ color: '#64748b', fontSize: '0.88rem', lineHeight: '1.5' }}>
-              Not a smartphone junkie? No worries, manage your PG from desktop on site with our rich web application.
-            </p>
-          </div>
-
-          <div className="glass-card" style={{ padding: '2rem', textAlign: 'center', background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 4px 20px rgba(0,0,0,0.04)' }}>
-            <div className="icon-box-crimson" style={{ margin: '0 auto 1.25rem auto' }}>
-              <Cloud size={32} />
-            </div>
-            <h3 style={{ fontSize: '1.15rem', fontWeight: '700', marginBottom: '0.5rem' }}>Cloud Support</h3>
-            <p style={{ color: '#64748b', fontSize: '0.88rem', lineHeight: '1.5' }}>
-              Everything you save is on our cloud. So you need not worry about losing your data, ever again!
-            </p>
-          </div>
+          ))}
         </div>
       </section>
 
-      {/* Features Showcase Section */}
-      <section id="features" style={{ padding: '4.5rem 3rem', background: '#f8fafc' }}>
-        <div style={{ textAlign: 'center', marginBottom: '3rem' }}>
-          <p style={{ color: '#64748b', fontSize: '0.95rem' }}>
-            Checkout what you can do with PG Manager™. Here are a few of the features, download our android app or signup to find out more.
-          </p>
-          <div style={{ width: '50px', height: '4px', background: 'var(--primary)', margin: '0.75rem auto 0 auto', borderRadius: '2px' }}></div>
+      {/* Features */}
+      <section id="features" className="lp-wrap lp-section stack-lg">
+        <div style={{ maxWidth: 640 }}>
+          <div className="small bold text-brand">EVERYTHING IN ONE PLACE</div>
+          <h2 className="lp-h2 mt-2">Less chasing. More living.</h2>
+          <p className="muted mt-3" style={{ fontSize: '1.02rem' }}>Built with PG owners in Bengaluru, Hyderabad and Chennai — the boring work is automatic, the important things reach you instantly.</p>
         </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px 1fr', gap: '2.5rem', maxWidth: '1200px', margin: '0 auto', alignItems: 'center' }}>
-          {/* Left Column Features */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2.5rem' }}>
-            <div style={{ display: 'flex', gap: '1.25rem', alignItems: 'flex-start', textAlign: 'right' }}>
-              <div>
-                <h3 style={{ fontSize: '1.1rem', fontWeight: '700', marginBottom: '0.35rem' }}>Manage PGs, Hostels and Apartments</h3>
-                <p style={{ color: '#64748b', fontSize: '0.88rem', lineHeight: '1.5' }}>
-                  Whether you run your PG in rooms, hostel or apartments, we've got you covered.
-                </p>
-              </div>
-              <div className="icon-box-crimson" style={{ flexShrink: 0 }}>
-                <Building2 size={26} />
-              </div>
+        <div className="grid-3">
+          {FEATURES.map(f => (
+            <div key={f.title} className="card card-pad card-hover stack">
+              <span className="stat-icon" style={{ width: 44, height: 44, borderRadius: 14, background: toneColor[f.tone][0], color: toneColor[f.tone][1] }}><f.icon size={21} /></span>
+              <h3 style={{ fontSize: '1.05rem' }}>{f.title}</h3>
+              <p className="muted small" style={{ lineHeight: 1.6 }}>{f.text}</p>
             </div>
+          ))}
+        </div>
+      </section>
 
-            <div style={{ display: 'flex', gap: '1.25rem', alignItems: 'flex-start', textAlign: 'right' }}>
-              <div>
-                <h3 style={{ fontSize: '1.1rem', fontWeight: '700', marginBottom: '0.35rem' }}>Manage Inmates & OCR</h3>
-                <p style={{ color: '#64748b', fontSize: '0.88rem', lineHeight: '1.5' }}>
-                  Check In and Check Out inmates with cloud support! Auto-fill registration forms using AI Aadhaar scanner.
-                </p>
-              </div>
-              <div className="icon-box-crimson" style={{ flexShrink: 0 }}>
-                <Users size={26} />
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', gap: '1.25rem', alignItems: 'flex-start', textAlign: 'right' }}>
-              <div>
-                <h3 style={{ fontSize: '1.1rem', fontWeight: '700', marginBottom: '0.35rem' }}>Manage Staff & Repairs</h3>
-                <p style={{ color: '#64748b', fontSize: '0.88rem', lineHeight: '1.5' }}>
-                  Add/Remove PG staff or managers to manage your PGs for you! AI predicts maintenance tasks automatically.
-                </p>
-              </div>
-              <div className="icon-box-crimson" style={{ flexShrink: 0 }}>
-                <UserCheck size={26} />
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', gap: '1.25rem', alignItems: 'flex-start', textAlign: 'right' }}>
-              <div>
-                <h3 style={{ fontSize: '1.1rem', fontWeight: '700', marginBottom: '0.35rem' }}>Room Availability Monitor</h3>
-                <p style={{ color: '#64748b', fontSize: '0.88rem', lineHeight: '1.5' }}>
-                  Track room availability efficiently across all floors in real time.
-                </p>
-              </div>
-              <div className="icon-box-crimson" style={{ flexShrink: 0 }}>
-                <Home size={26} />
-              </div>
+      {/* Assistant demo */}
+      <section id="assistant" style={{ background: 'var(--surface)', borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)' }}>
+        <div className="lp-wrap lp-section lp-hero" style={{ padding: '72px 24px' }}>
+          <div className="stack-lg">
+            <div className="small bold text-brand">MEET PG BUDDY</div>
+            <h2 className="lp-h2">An assistant that speaks like a person — and your residents' language.</h2>
+            <p className="muted" style={{ fontSize: '1.02rem' }}>Type or talk in English, Hindi, Telugu, Tamil or Kannada. PG Buddy looks up real data, takes action, and replies warmly — never with made-up numbers.</p>
+            <div className="stack">
+              {[
+                [Languages, 'Understands mixed language like "naa room lo fan pani cheyatledu"'],
+                [Mic, 'Voice input and read-aloud replies, hands-free'],
+                [ShieldAlert, 'Fire, gas leak or medical? Owner gets a siren alert instantly'],
+                [Megaphone, '"Water cut tomorrow 10–2" becomes a polished notice in 5 languages']
+              ].map(([I, t]) => (
+                <div key={t} className="row" style={{ alignItems: 'flex-start' }}>
+                  <span className="stat-icon" style={{ background: 'var(--brand-50)', color: 'var(--brand)' }}><I size={17} /></span>
+                  <span className="bold" style={{ paddingTop: 6 }}>{t}</span>
+                </div>
+              ))}
             </div>
           </div>
-
-          {/* Center Phone Mockup Frame */}
-          <div className="phone-mockup-frame floating-img">
-            <img src="/images/pg_1.webp" alt="Mobile App UI" />
-          </div>
-
-          {/* Right Column Features */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2.5rem' }}>
-            <div style={{ display: 'flex', gap: '1.25rem', alignItems: 'flex-start' }}>
-              <div className="icon-box-crimson" style={{ flexShrink: 0 }}>
-                <TrendingUp size={26} />
-              </div>
-              <div>
-                <h3 style={{ fontSize: '1.1rem', fontWeight: '700', marginBottom: '0.35rem' }}>Expense Management</h3>
-                <p style={{ color: '#64748b', fontSize: '0.88rem', lineHeight: '1.5' }}>
-                  Add and track your PG expenses to visualize profitability and growth predictions.
-                </p>
-              </div>
+          <div className="card" style={{ overflow: 'hidden', boxShadow: 'var(--shadow-lg)', borderRadius: 24 }}>
+            <div className="chat-head">
+              <div className="chat-avatar"><Sparkles size={20} /></div>
+              <div><div className="bold">PG Buddy</div><div className="tiny" style={{ opacity: 0.9 }}>Online · replies instantly</div></div>
             </div>
-
-            <div style={{ display: 'flex', gap: '1.25rem', alignItems: 'flex-start' }}>
-              <div className="icon-box-crimson" style={{ flexShrink: 0 }}>
-                <IndianRupee size={26} />
-              </div>
-              <div>
-                <h3 style={{ fontSize: '1.1rem', fontWeight: '700', marginBottom: '0.35rem' }}>Smart Rent Collection</h3>
-                <p style={{ color: '#64748b', fontSize: '0.88rem', lineHeight: '1.5' }}>
-                  Collect rent on your preferred day of the month, which can also be configured for each inmate/tenant.
-                </p>
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', gap: '1.25rem', alignItems: 'flex-start' }}>
-              <div className="icon-box-crimson" style={{ flexShrink: 0 }}>
-                <FileText size={26} />
-              </div>
-              <div>
-                <h3 style={{ fontSize: '1.1rem', fontWeight: '700', marginBottom: '0.35rem' }}>Rent Receipts</h3>
-                <p style={{ color: '#64748b', fontSize: '0.88rem', lineHeight: '1.5' }}>
-                  Why waste paper when you can mail rent receipts to inmates. Go green!
-                </p>
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', gap: '1.25rem', alignItems: 'flex-start' }}>
-              <div className="icon-box-crimson" style={{ flexShrink: 0 }}>
-                <BarChart3 size={26} />
-              </div>
-              <div>
-                <h3 style={{ fontSize: '1.1rem', fontWeight: '700', marginBottom: '0.35rem' }}>AI Analytics & Reports</h3>
-                <p style={{ color: '#64748b', fontSize: '0.88rem', lineHeight: '1.5' }}>
-                  Generate comprehensive financial, occupancy, and complaint analytics automatically.
-                </p>
-              </div>
+            <div className="chat-body" style={{ minHeight: 340 }}>
+              {CHAT.map((m, i) => (
+                <div key={i} className={`msg ${m.from === 'user' ? 'msg-user' : 'msg-ai'}`} style={{ animationDelay: `${i * 0.15}s` }}>
+                  <div className="bubble">{m.text}</div>
+                </div>
+              ))}
+              <div className="msg msg-ai"><div className="bubble" style={{ padding: 0 }}><div className="typing"><span /><span /><span /></div></div></div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Property Showcase Gallery */}
-      <section id="gallery" style={{ padding: '4.5rem 3rem', background: '#ffffff', textAlign: 'center' }}>
-        <h2 style={{ fontSize: '2rem', fontWeight: '800', color: '#0f172a', letterSpacing: '-0.02em' }}>
-          PREMIUM LIVING <span style={{ color: 'var(--primary)', fontWeight: '300' }}>EXPERIENCE</span>
-        </h2>
-        <div style={{ width: '50px', height: '4px', background: 'var(--primary)', margin: '0.75rem auto 1rem auto', borderRadius: '2px' }}></div>
-        <p style={{ color: '#64748b', fontSize: '0.95rem', maxWidth: '600px', margin: '0 auto 3rem auto' }}>
-          Designed for maximum inmate comfort, clean hygiene, luxury room furnishing, and 24/7 security.
-        </p>
-
-        <div className="grid-3" style={{ maxWidth: '1150px', margin: '0 auto' }}>
-          {/* Card 1: pg_2.avif */}
-          <div className="glass-card image-card-frame floating-img" style={{ height: '320px', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', padding: '1.5rem', color: 'white', textShadow: '0 2px 8px rgba(0,0,0,0.8)' }}>
-            <img src="/images/pg_2.avif" alt="Modern Room Living" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 0 }} />
-            <div style={{ position: 'relative', zIndex: 1, textAlign: 'left', background: 'linear-gradient(transparent, rgba(15, 23, 42, 0.9))', padding: '1rem', borderRadius: 'var(--radius-sm)' }}>
-              <span className="badge badge-primary" style={{ background: '#d0124e', color: 'white', marginBottom: '0.5rem' }}>Luxury Furnished Rooms</span>
-              <h3 style={{ fontSize: '1.15rem', fontWeight: '800' }}>Fully Equipped Bedrooms</h3>
-              <p style={{ fontSize: '0.8rem', color: '#e2e8f0', marginTop: '0.2rem' }}>AC, Cupboard, Study Desk, and Attached Bathroom.</p>
-            </div>
+      {/* Rooms gallery */}
+      <section id="rooms" className="lp-wrap lp-section stack-lg">
+        <div className="row between wrap">
+          <div>
+            <div className="small bold text-brand">STAY WITH US</div>
+            <h2 className="lp-h2 mt-2">Rooms that feel like home</h2>
           </div>
-
-          {/* Card 2: pg_3.avif */}
-          <div className="glass-card image-card-frame floating-img-slow" style={{ height: '320px', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', padding: '1.5rem', color: 'white', textShadow: '0 2px 8px rgba(0,0,0,0.8)' }}>
-            <img src="/images/pg_3.avif" alt="Building Architecture" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 0 }} />
-            <div style={{ position: 'relative', zIndex: 1, textAlign: 'left', background: 'linear-gradient(transparent, rgba(15, 23, 42, 0.9))', padding: '1rem', borderRadius: 'var(--radius-sm)' }}>
-              <span className="badge badge-cyan" style={{ background: '#0284c7', color: 'white', marginBottom: '0.5rem' }}>Building Infrastructure</span>
-              <h3 style={{ fontSize: '1.15rem', fontWeight: '800' }}>Multi-Floor Premises</h3>
-              <p style={{ fontSize: '0.8rem', color: '#e2e8f0', marginTop: '0.2rem' }}>24/7 CCTV Security, Power Backup & Dedicated Parking.</p>
+          <Link to={appLink} className="btn btn-secondary">See live availability <ArrowRight size={16} /></Link>
+        </div>
+        <div className="grid-4">
+          {[['pg_1.webp', 'Single rooms', 'from ₹8,000'], ['pg_2.avif', 'Twin sharing', 'from ₹6,000'], ['pg_3.avif', 'Triple sharing', 'from ₹4,500'], ['pg_4.webp', 'AC rooms', 'from ₹7,500']].map(([img, t, p]) => (
+            <div key={t} className="card card-hover" style={{ overflow: 'hidden' }}>
+              <div className="room-img" style={{ height: 200 }}><img src={`/images/${img}`} alt={t} loading="lazy" /></div>
+              <div className="card-pad" style={{ padding: 16 }}>
+                <div className="bold">{t}</div>
+                <div className="small muted">{p} / month · meals included</div>
+              </div>
             </div>
-          </div>
+          ))}
+        </div>
+      </section>
 
-          {/* Card 3: pg_4.webp */}
-          <div className="glass-card image-card-frame floating-img" style={{ height: '320px', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', padding: '1.5rem', color: 'white', textShadow: '0 2px 8px rgba(0,0,0,0.8)' }}>
-            <img src="/images/pg_4.webp" alt="Dining & Food Facility" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 0 }} />
-            <div style={{ position: 'relative', zIndex: 1, textAlign: 'left', background: 'linear-gradient(transparent, rgba(15, 23, 42, 0.9))', padding: '1rem', borderRadius: 'var(--radius-sm)' }}>
-              <span className="badge badge-success" style={{ background: '#059669', color: 'white', marginBottom: '0.5rem' }}>Hygienic Dining & Kitchen</span>
-              <h3 style={{ fontSize: '1.15rem', fontWeight: '800' }}>Nutritious Daily Meals</h3>
-              <p style={{ fontSize: '0.8rem', color: '#e2e8f0', marginTop: '0.2rem' }}>AI Meal Planning, Calories & Protein tracking for residents.</p>
-            </div>
+      {/* Testimonials */}
+      <section id="faq" style={{ background: 'var(--surface)', borderTop: '1px solid var(--border)' }}>
+        <div className="lp-wrap lp-section grid-3">
+          {[
+            ['"I used to spend the first week of every month calling people for rent. Now I tap one button."', 'Rajesh K.', 'PG owner, Koramangala'],
+            ['"I told it in Telugu that my geyser wasn\'t working. Fixed the same evening."', 'Sneha R.', 'Resident, 2 years'],
+            ['"The monthly PDF report is what I send my CA. Done in a click."', 'Lakshmi I.', 'Hostel owner, Chennai']
+          ].map(([q, n, r]) => (
+            <figure key={n} className="card card-pad stack">
+              <div className="row-sm" style={{ color: '#f59e0b' }}>{[1, 2, 3, 4, 5].map(i => <Star key={i} size={15} fill="currentColor" />)}</div>
+              <blockquote style={{ fontWeight: 600, lineHeight: 1.6 }}>{q}</blockquote>
+              <figcaption className="small muted"><span className="bold" style={{ color: 'var(--ink)' }}>{n}</span> · {r}</figcaption>
+            </figure>
+          ))}
+        </div>
+      </section>
+
+      {/* CTA */}
+      <section className="lp-wrap lp-section">
+        <div className="hero-card" style={{ padding: '48px 40px', textAlign: 'center' }}>
+          <h2 className="lp-h2" style={{ color: '#fff' }}>See it with real data in 10 seconds.</h2>
+          <p style={{ opacity: 0.9, marginTop: 10, fontSize: '1.05rem' }}>The demo PG has 15 rooms, 14 residents and six months of history.</p>
+          <div className="row wrap" style={{ justifyContent: 'center', marginTop: 24, position: 'relative', zIndex: 1 }}>
+            <Link to={appLink} className="btn btn-white btn-lg">{user ? 'Open dashboard' : 'Open the demo'} <ArrowRight size={18} /></Link>
           </div>
         </div>
       </section>
 
-      {/* AI Portal Banner */}
-      <section id="ai-portal" style={{ padding: '4rem 3rem', background: '#0f172a', color: 'white', textAlign: 'center' }}>
-        <div style={{ maxWidth: '800px', margin: '0 auto' }}>
-          <span className="badge badge-primary" style={{ fontSize: '0.8rem', padding: '0.4rem 0.9rem', marginBottom: '1rem', background: 'rgba(208, 18, 78, 0.25)', color: 'white' }}>
-            <Sparkles size={14} /> Virtual PG Manager AI
-          </span>
-          <h2 style={{ fontSize: '2.2rem', fontWeight: '800', marginBottom: '1rem', color: '#ffffff' }}>
-            Ready to experience an AI-First PG System?
-          </h2>
-          <p style={{ color: '#94a3b8', fontSize: '1rem', marginBottom: '2rem', lineHeight: '1.6' }}>
-            Log in to access real-time vacancy searches, automated complaint analysis, food menu nutrition recommendations, and daily business insights.
-          </p>
-          <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
-            <Link to="/login" className="btn btn-primary" style={{ padding: '0.85rem 2rem', fontSize: '1rem', background: '#d0124e' }}>
-              <Bot size={20} /> Open Owner & Tenant Portal
-            </Link>
-          </div>
+      <footer style={{ borderTop: '1px solid var(--border)' }}>
+        <div className="lp-wrap row between wrap small muted" style={{ padding: '24px' }}>
+          <span className="row-sm"><Building2 size={16} className="text-brand" /> PG Manager · made for Indian PGs & hostels</span>
+          <span>© {new Date().getFullYear()} PG Manager</span>
         </div>
-      </section>
-
-      {/* Footer */}
-      <footer style={{ padding: '2rem 3rem', background: '#090d16', color: '#64748b', fontSize: '0.85rem', textAlign: 'center', borderTop: '1px solid #1e293b' }}>
-        <p>© 2026 PG Manager™ AI System. All rights reserved. Built for modern Paying Guest & Hostel management.</p>
       </footer>
     </div>
   );

@@ -1,74 +1,62 @@
 /**
  * Smart Notice Generator (Feature #7)
- * Takes rough input, creates professional notice with multi-language translations.
+ * Rough owner input → polished notice + Hindi/Telugu/Tamil/Kannada translations in one AI call.
  */
 
-import { getCompletion } from './openaiClient.js';
-import { translateText } from './languageDetector.js';
+import { getJSON, isAIConfigured } from './openaiClient.js';
 import Notice from '../../models/Notice.js';
 
-/**
- * Generate a professional notice from rough input
- */
-export async function generateProfessionalNotice(rawInput, priority = 'medium', category = 'general', userId) {
-  try {
-    const prompt = `Convert this rough message into a professional PG/hostel notice.
+function fallbackTitle(raw) {
+  const clean = raw.trim().replace(/\s+/g, ' ');
+  const title = clean.length > 60 ? clean.slice(0, 57) + '…' : clean;
+  return title.charAt(0).toUpperCase() + title.slice(1);
+}
 
-Input: "${rawInput}"
-
-Return ONLY valid JSON:
-{
-  "title": "Professional notice title",
-  "content": "Professional, clear notice content with proper formatting. Include relevant details, timing, and any instructions for tenants. Keep it concise but complete."
-}`;
-
-    const result = await getCompletion(prompt, 'You are a professional notice writer for a PG management system. Create clear, well-structured notices.', {
-      temperature: 0.5,
-      maxTokens: 500
-    });
-    
-    const jsonMatch = result.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('Invalid response');
-    
-    const noticeData = JSON.parse(jsonMatch[0]);
-    
-    // Generate translations (Feature #28)
-    const translations = {
-      en: noticeData.content,
-      hi: await translateText(noticeData.content, 'hi'),
-      te: await translateText(noticeData.content, 'te'),
-      ta: await translateText(noticeData.content, 'ta'),
-      kn: await translateText(noticeData.content, 'kn')
-    };
-    
-    // Save notice
-    const notice = await Notice.create({
-      title: noticeData.title,
-      content: noticeData.content,
-      originalInput: rawInput,
-      aiGenerated: true,
-      translations,
-      priority,
-      category,
-      createdBy: userId
-    });
-    
-    return notice;
-  } catch (error) {
-    console.error('Notice generation error:', error);
-    
-    // Fallback - save raw input as notice
-    const notice = await Notice.create({
-      title: rawInput.substring(0, 50),
-      content: rawInput,
-      originalInput: rawInput,
-      aiGenerated: false,
-      translations: { en: rawInput },
-      priority,
-      category,
-      createdBy: userId
-    });
-    
-    return notice;
+export async function draftNotice(rawInput) {
+  if (!isAIConfigured()) {
+    return { title: fallbackTitle(rawInput), content: rawInput.trim(), translations: { en: rawInput.trim() }, aiGenerated: false };
   }
+  try {
+    const today = new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    const result = await getJSON(
+      `Turn the owner's rough note into a clear notice for residents of an Indian PG hostel. Today is ${today} — resolve words like "tomorrow" into actual dates.
+
+Owner's note: """${rawInput}"""
+
+Return ONLY JSON:
+{
+  "title": "short title (max 8 words, may include one fitting emoji)",
+  "content": "Warm, clear notice in English: 'Dear residents,' + what/when/where + what they should do + apology/thanks if relevant + '— Management'. Max 90 words. Use line breaks.",
+  "hi": "same notice in Hindi",
+  "te": "same notice in Telugu",
+  "ta": "same notice in Tamil",
+  "kn": "same notice in Kannada"
+}`,
+      'You write friendly, precise building notices and translate them accurately. JSON only.',
+      { temperature: 0.4, maxTokens: 2500 }
+    );
+    return {
+      title: result.title || fallbackTitle(rawInput),
+      content: result.content || rawInput,
+      translations: { en: result.content, hi: result.hi, te: result.te, ta: result.ta, kn: result.kn },
+      aiGenerated: true
+    };
+  } catch (error) {
+    console.warn('Notice drafting fell back to raw text:', error.message);
+    return { title: fallbackTitle(rawInput), content: rawInput.trim(), translations: { en: rawInput.trim() }, aiGenerated: false };
+  }
+}
+
+export async function generateProfessionalNotice(rawInput, priority = 'medium', category = 'general', userId) {
+  const draft = await draftNotice(rawInput);
+  return Notice.create({
+    title: draft.title,
+    content: draft.content,
+    originalInput: rawInput,
+    aiGenerated: draft.aiGenerated,
+    translations: draft.translations,
+    priority,
+    category,
+    createdBy: userId
+  });
 }

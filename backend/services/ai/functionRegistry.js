@@ -1,546 +1,286 @@
 /**
- * AI Function Registry
- * 
- * Central registry of all OpenAI function definitions.
- * These define what the AI can DO — not just what it can say.
- * Each function maps to a real backend action.
+ * Function Registry
+ *
+ * Tool definitions the AI assistant can call. Each role gets its own toolset;
+ * the executor additionally enforces permissions, so a tenant can never act
+ * on someone else's data even if the model tries.
  */
 
-// ==========================================
-// ROOM FUNCTIONS
-// ==========================================
-const searchRooms = {
-  name: 'search_rooms',
-  description: 'Search for rooms based on various criteria like price, type, floor, amenities. Use this when someone asks about available rooms, needs a room, or searches with specific requirements.',
-  parameters: {
-    type: 'object',
-    properties: {
-      maxRent: { type: 'number', description: 'Maximum rent budget in INR' },
-      minRent: { type: 'number', description: 'Minimum rent in INR' },
-      type: { type: 'string', enum: ['single', 'double', 'triple', 'dormitory'], description: 'Room sharing type' },
-      floor: { type: 'number', description: 'Floor number' },
-      hasAC: { type: 'boolean', description: 'Whether room should have AC' },
-      hasParking: { type: 'boolean', description: 'Whether parking is needed' },
-      hasAttachedBathroom: { type: 'boolean', description: 'Whether attached bathroom is needed' },
-      hasWifi: { type: 'boolean', description: 'Whether WiFi is needed' },
-      status: { type: 'string', enum: ['available', 'partially-occupied'], description: 'Room availability status' },
-      genderPreference: { type: 'string', enum: ['male', 'female', 'any'], description: 'Gender preference for the room' },
-      furnishing: { type: 'string', enum: ['fully-furnished', 'semi-furnished', 'unfurnished'], description: 'Furnishing level' }
-    }
-  }
-};
+const fn = (name, description, properties = {}, required = []) => ({
+  name,
+  description,
+  parameters: { type: 'object', properties, ...(required.length ? { required } : {}) }
+});
 
-const getEmptyRooms = {
-  name: 'get_empty_rooms',
-  description: 'Get all empty/available rooms. Use when someone asks "how many rooms are empty" or "show vacant rooms".',
-  parameters: {
-    type: 'object',
-    properties: {
-      floor: { type: 'number', description: 'Filter by specific floor' }
-    }
-  }
-};
+const ROOM_TYPES = ['single', 'double', 'triple', 'dormitory'];
+const COMPLAINT_CATEGORIES = ['electrical', 'plumbing', 'furniture', 'cleaning', 'pest-control', 'wifi-internet', 'ac-cooling', 'water-supply', 'security', 'noise', 'food', 'other'];
+const MAINTENANCE_TYPES = ['ac-service', 'plumbing', 'electrical', 'pest-control', 'cleaning', 'painting', 'water-tank', 'generator', 'elevator', 'general'];
+const EXPENSE_CATEGORIES = ['food', 'electricity', 'water', 'gas', 'maintenance', 'salary', 'rent-building', 'internet', 'cleaning', 'pest-control', 'equipment', 'miscellaneous'];
+const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'today', 'tomorrow'];
 
-const getRoomDetails = {
-  name: 'get_room_details',
-  description: 'Get details of a specific room by room number.',
-  parameters: {
-    type: 'object',
-    properties: {
-      roomNumber: { type: 'string', description: 'The room number to look up' }
-    },
-    required: ['roomNumber']
-  }
-};
+// ---------------- Rooms ----------------
+const searchRooms = fn('search_rooms',
+  'Find rooms with free beds matching criteria (budget, sharing type, floor, AC, bathroom, gender). Use for any "I need a room…" or "rooms under ₹X" question.',
+  {
+    maxRent: { type: 'number', description: 'Maximum monthly rent per bed in INR' },
+    minRent: { type: 'number', description: 'Minimum monthly rent in INR' },
+    type: { type: 'string', enum: ROOM_TYPES, description: 'Sharing type' },
+    floor: { type: 'number', description: 'Floor number' },
+    hasAC: { type: 'boolean' },
+    hasAttachedBathroom: { type: 'boolean' },
+    hasParking: { type: 'boolean' },
+    hasBalcony: { type: 'boolean' },
+    genderPreference: { type: 'string', enum: ['male', 'female'] }
+  });
 
-const getAutoRoomMatch = {
-  name: 'get_auto_room_match',
-  description: 'AI recommends the best room for a tenant based on their preferences like budget, gender, AC preference, etc.',
-  parameters: {
-    type: 'object',
-    properties: {
-      budget: { type: 'number', description: 'Maximum budget in INR' },
-      gender: { type: 'string', enum: ['male', 'female', 'other'] },
-      acPreference: { type: 'boolean', description: 'Whether AC is preferred' },
-      foodPreference: { type: 'string', enum: ['veg', 'non-veg', 'vegan', 'any'] },
-      smokingPreference: { type: 'string', enum: ['smoker', 'non-smoker', 'no-preference'] },
-      occupation: { type: 'string', enum: ['student', 'working-professional', 'other'] },
-      noisePreference: { type: 'string', enum: ['silent', 'moderate', 'loud', 'no-preference'] },
-      parkingNeeded: { type: 'boolean' }
-    }
-  }
-};
+const getEmptyRooms = fn('get_empty_rooms',
+  'List vacancy: completely empty rooms and rooms with free beds. Use for "how many rooms are empty / vacant beds".',
+  { floor: { type: 'number', description: 'Optional floor filter' } });
 
-// ==========================================
-// PAYMENT FUNCTIONS
-// ==========================================
-const getIncomeReport = {
-  name: 'get_income_report',
-  description: 'Get income information for a specific period. Use when someone asks about income, revenue, earnings, or money collected.',
-  parameters: {
-    type: 'object',
-    properties: {
-      month: { type: 'number', description: 'Month number (1-12)' },
-      year: { type: 'number', description: 'Year' },
-      period: { type: 'string', enum: ['today', 'this-week', 'this-month', 'last-month', 'this-year'], description: 'Predefined period' }
-    }
-  }
-};
+const getRoomDetails = fn('get_room_details',
+  'Get full details of one room by room number, including who lives there.',
+  { roomNumber: { type: 'string' } }, ['roomNumber']);
 
-const getUnpaidTenants = {
-  name: 'get_unpaid_tenants',
-  description: 'Get list of tenants who have not paid rent. Use when someone asks "who has not paid" or "pending rent" or "unpaid tenants".',
-  parameters: {
-    type: 'object',
-    properties: {
-      month: { type: 'number', description: 'Month to check' },
-      year: { type: 'number', description: 'Year to check' }
-    }
-  }
-};
+const getAutoRoomMatch = fn('get_auto_room_match',
+  'Recommend the best rooms for a prospective tenant based on their preferences.',
+  {
+    budget: { type: 'number', description: 'Maximum budget in INR' },
+    gender: { type: 'string', enum: ['male', 'female', 'other'] },
+    acPreference: { type: 'boolean' },
+    occupation: { type: 'string', enum: ['student', 'working-professional', 'other'] },
+    parkingNeeded: { type: 'boolean' }
+  });
 
-const getRentStatus = {
-  name: 'get_rent_status',
-  description: 'Get rent payment status for a specific tenant. Use when a tenant asks "how much rent is due" or "when is my payment date".',
-  parameters: {
-    type: 'object',
-    properties: {
-      tenantId: { type: 'string', description: 'The tenant ID (use current user ID if tenant is asking about themselves)' }
-    }
-  }
-};
+const getFacilities = fn('get_facilities', 'Summarise facilities and amenities available in the PG (AC rooms, WiFi, parking, food, laundry…).');
 
-const processPayment = {
-  name: 'process_payment',
-  description: 'Process a rent payment. Use when someone says "pay my rent" or "record payment".',
-  parameters: {
-    type: 'object',
-    properties: {
-      tenantId: { type: 'string', description: 'Tenant making the payment' },
-      amount: { type: 'number', description: 'Payment amount in INR' },
-      method: { type: 'string', enum: ['cash', 'upi', 'bank-transfer', 'card'], description: 'Payment method' }
-    },
-    required: ['amount', 'method']
-  }
-};
+// ---------------- Dashboard & finance ----------------
+const getDashboardStats = fn('get_dashboard_stats',
+  "Live snapshot of the PG today: bed occupancy, this month's rent collected/pending, expenses, profit, open complaints, visitors, upcoming maintenance. Use for 'how is my PG doing', 'today's summary', 'dashboard'.");
 
-const getRentPrediction = {
-  name: 'get_rent_prediction',
-  description: 'Predict which tenants may pay late, who usually pays early, and late payment probabilities.',
-  parameters: {
-    type: 'object',
-    properties: {}
-  }
-};
+const getIncomeReport = fn('get_income_report',
+  'Income / rent collection report for a period.',
+  {
+    period: { type: 'string', enum: ['today', 'this-week', 'this-month', 'last-month', 'specific-month'] },
+    month: { type: 'number', description: '1-12, when period is specific-month' },
+    year: { type: 'number' }
+  });
 
-// ==========================================
-// COMPLAINT FUNCTIONS
-// ==========================================
-const createComplaint = {
-  name: 'create_complaint',
-  description: 'Create/raise a new complaint. Use when someone says "raise complaint", "report issue", "my fan is broken", etc. AI will auto-analyze the complaint.',
-  parameters: {
-    type: 'object',
-    properties: {
-      description: { type: 'string', description: 'Description of the complaint/issue' },
-      roomNumber: { type: 'string', description: 'Room number where the issue is' }
-    },
-    required: ['description']
-  }
-};
+const getUnpaidTenants = fn('get_unpaid_tenants',
+  'List tenants who have not paid rent (pending or overdue) for a month. Defaults to the current month.',
+  { month: { type: 'number' }, year: { type: 'number' } });
 
-const getPendingComplaints = {
-  name: 'get_pending_complaints',
-  description: 'Get all pending/open complaints. Use when someone asks "which complaints are pending" or "open issues".',
-  parameters: {
-    type: 'object',
-    properties: {
-      status: { type: 'string', enum: ['open', 'in-progress', 'resolved', 'closed'] },
-      floor: { type: 'number', description: 'Filter by floor' },
-      category: { type: 'string', description: 'Filter by complaint category' }
-    }
-  }
-};
+const recordPayment = fn('record_payment',
+  "Mark a tenant's rent as PAID (owner only). Use when the owner says e.g. 'Priya paid rent by UPI' or 'record ₹6000 cash from room 102'. Identify the tenant by name or room number.",
+  {
+    tenantName: { type: 'string', description: 'Tenant name (partial match OK)' },
+    roomNumber: { type: 'string', description: 'Room number, if the name is ambiguous or not given' },
+    amount: { type: 'number', description: 'Amount in INR; defaults to the pending rent' },
+    method: { type: 'string', enum: ['cash', 'upi', 'bank-transfer', 'card', 'other'] },
+    transactionId: { type: 'string' }
+  });
 
-const getComplaintsByTenant = {
-  name: 'get_complaints_by_tenant',
-  description: 'Get complaints filed by a specific tenant.',
-  parameters: {
-    type: 'object',
-    properties: {
-      tenantId: { type: 'string', description: 'Tenant ID' }
-    }
-  }
-};
+const sendRentReminders = fn('send_rent_reminders',
+  'Prepare personalised, polite rent-reminder WhatsApp messages (with one-tap WhatsApp links) for every tenant with unpaid rent this month, and notify them in the app.',
+  { tone: { type: 'string', enum: ['friendly', 'firm'], description: 'Default friendly' } });
 
-// ==========================================
-// VISITOR FUNCTIONS
-// ==========================================
-const getTodayVisitors = {
-  name: 'get_today_visitors',
-  description: 'Get list of visitors for today. Use when someone asks "show today visitors" or "who visited today".',
-  parameters: {
-    type: 'object',
-    properties: {
-      date: { type: 'string', description: 'Specific date in YYYY-MM-DD format. Defaults to today.' }
-    }
-  }
-};
+const getRentStatus = fn('get_rent_status',
+  "Rent status and recent payment history. For a tenant this is always their own; an owner can pass a tenant name.",
+  { tenantName: { type: 'string', description: 'Owner only: which tenant' } });
 
-// ==========================================
-// NOTICE FUNCTIONS
-// ==========================================
-const generateNotice = {
-  name: 'generate_notice',
-  description: 'Generate a professional notice from rough input. AI creates the notice and translates it. Use when owner says "create notice about..." or "notify tenants about...".',
-  parameters: {
-    type: 'object',
-    properties: {
-      rawInput: { type: 'string', description: 'The rough text from the owner about what the notice should say' },
-      priority: { type: 'string', enum: ['low', 'medium', 'high', 'urgent'], description: 'Notice priority' },
-      category: { type: 'string', enum: ['general', 'maintenance', 'payment', 'event', 'rule', 'emergency'] }
-    },
-    required: ['rawInput']
-  }
-};
+const getPaymentInfo = fn('get_payment_info', 'How to pay rent: UPI ID, bank details, due date and late-fee policy.');
 
-const getNotices = {
-  name: 'get_notices',
-  description: 'Get active notices. Use when tenant asks "show notices" or "any announcements".',
-  parameters: {
-    type: 'object',
-    properties: {
-      category: { type: 'string' },
-      limit: { type: 'number', description: 'Number of notices to return' }
-    }
-  }
-};
+const getRentPrediction = fn('get_rent_prediction', 'Predict which tenants are likely to pay late next month, based on payment history.');
 
-// ==========================================
-// MENU FUNCTIONS
-// ==========================================
-const getMenu = {
-  name: 'get_menu',
-  description: 'Get food menu for a specific date. Use when someone asks "show menu", "what is for lunch", "today food".',
-  parameters: {
-    type: 'object',
-    properties: {
-      date: { type: 'string', description: 'Date in YYYY-MM-DD format. Defaults to today.' },
-      meal: { type: 'string', enum: ['breakfast', 'lunch', 'snacks', 'dinner'], description: 'Specific meal to show' }
-    }
-  }
-};
+// ---------------- Complaints ----------------
+const createComplaint = fn('create_complaint',
+  "Register a complaint / maintenance issue (AC not working, water leak, WiFi slow, food issue, emergency…). The AI auto-categorises and prioritises it. Use whenever a user reports a problem.",
+  {
+    description: { type: 'string', description: 'The problem in the user\'s words' },
+    roomNumber: { type: 'string', description: 'Optional; defaults to the reporter\'s room' }
+  }, ['description']);
 
-const getFoodRecommendation = {
-  name: 'get_food_recommendation',
-  description: 'Get food recommendations based on dietary needs. Use when someone says "need high protein" or "suggest healthy food".',
-  parameters: {
-    type: 'object',
-    properties: {
-      dietaryNeed: { type: 'string', description: 'The dietary requirement like high protein, low carb, etc.' },
-      restrictions: { type: 'string', description: 'Any dietary restrictions like vegetarian, vegan, etc.' }
-    },
-    required: ['dietaryNeed']
-  }
-};
+const getPendingComplaints = fn('get_pending_complaints',
+  'List open / in-progress complaints, most urgent first.',
+  {
+    category: { type: 'string', enum: COMPLAINT_CATEGORIES },
+    floor: { type: 'number' },
+    status: { type: 'string', enum: ['open', 'in-progress', 'resolved', 'closed'] }
+  });
 
-// ==========================================
-// MAINTENANCE FUNCTIONS
-// ==========================================
-const scheduleMaintenance = {
-  name: 'schedule_maintenance',
-  description: 'Schedule maintenance or any task. Use when someone says "schedule pest control", "plan AC service", etc.',
-  parameters: {
-    type: 'object',
-    properties: {
-      type: { type: 'string', enum: ['ac-service', 'plumbing', 'electrical', 'pest-control', 'cleaning', 'painting', 'water-tank', 'generator', 'elevator', 'general'] },
-      description: { type: 'string', description: 'Description of the maintenance task' },
-      scheduledDate: { type: 'string', description: 'Date to schedule in YYYY-MM-DD format' },
-      roomNumber: { type: 'string', description: 'Room number if specific to a room' },
-      assignedTo: { type: 'string', description: 'Person or company to assign' }
-    },
-    required: ['type', 'description', 'scheduledDate']
-  }
-};
+const getMyComplaints = fn('get_complaints_by_tenant',
+  "A tenant's complaints and their status. For tenants this is always their own.",
+  { tenantName: { type: 'string', description: 'Owner only' } });
 
-const getMaintenancePredictions = {
-  name: 'get_maintenance_predictions',
-  description: 'Get AI predictions about upcoming maintenance needs based on history.',
-  parameters: {
-    type: 'object',
-    properties: {
-      type: { type: 'string', description: 'Type of maintenance to predict' }
-    }
-  }
-};
+const updateComplaintStatus = fn('update_complaint_status',
+  "Owner: change a complaint's status (e.g. mark resolved), assign staff, or reply. Identify by complaintId (from a previous listing) or by room number + keyword.",
+  {
+    complaintId: { type: 'string' },
+    roomNumber: { type: 'string' },
+    keyword: { type: 'string', description: 'Word from the complaint text, e.g. "fan", "wifi"' },
+    status: { type: 'string', enum: ['open', 'in-progress', 'resolved', 'closed'] },
+    assignedTo: { type: 'string' },
+    ownerResponse: { type: 'string', description: 'Message to show the tenant' }
+  });
 
-// ==========================================
-// REPORT FUNCTIONS
-// ==========================================
-const generateMonthlyReport = {
-  name: 'generate_monthly_report',
-  description: 'Generate comprehensive monthly report with income, expenses, occupancy, complaints, etc.',
-  parameters: {
-    type: 'object',
-    properties: {
-      month: { type: 'number', description: 'Month number' },
-      year: { type: 'number', description: 'Year' }
-    }
-  }
-};
+// ---------------- People ----------------
+const findTenant = fn('find_tenant',
+  'Look up tenants by name, room number or phone: contact, room, rent status, move-in date, risk.',
+  { query: { type: 'string', description: 'Name, room number or phone' } }, ['query']);
 
-const getDailySummary = {
-  name: 'get_daily_summary',
-  description: 'Get AI-generated daily summary with occupancy, income, complaints, suggestions, and to-do list.',
-  parameters: {
-    type: 'object',
-    properties: {
-      date: { type: 'string', description: 'Date in YYYY-MM-DD format. Defaults to today.' }
-    }
-  }
-};
+const getRoommateInfo = fn('get_roommate_info', "The current user's room and roommates.");
 
-const getBusinessInsights = {
-  name: 'get_business_insights',
-  description: 'Get AI-generated business insights like occupancy trends, revenue analysis, and improvement suggestions.',
-  parameters: {
-    type: 'object',
-    properties: {}
-  }
-};
+const getRoommateMatch = fn('get_roommate_match',
+  'Find compatible roommates for a tenant based on lifestyle (sleep timing, cleanliness, interests).',
+  {
+    tenantName: { type: 'string', description: 'Owner only; defaults to current user' },
+    sleepTiming: { type: 'string', enum: ['early-sleeper', 'night-owl', 'flexible'] },
+    smokingPreference: { type: 'string', enum: ['smoker', 'non-smoker', 'no-preference'] },
+    cleanlinessLevel: { type: 'number' },
+    interests: { type: 'string', description: 'Comma-separated' }
+  });
 
-// ==========================================
-// TENANT INFO FUNCTIONS
-// ==========================================
-const getRoommateInfo = {
-  name: 'get_roommate_info',
-  description: 'Get information about a tenant\'s roommate(s). Use when someone asks "who is my roommate".',
-  parameters: {
-    type: 'object',
-    properties: {
-      tenantId: { type: 'string', description: 'The tenant asking about their roommate' }
-    }
-  }
-};
+const getRiskyTenants = fn('get_risky_tenants', 'Tenants with rule violations or poor payment behaviour.');
 
-const getFacilities = {
-  name: 'get_facilities',
-  description: 'Get information about PG facilities and amenities. Use when someone asks "what facilities are available".',
-  parameters: {
-    type: 'object',
-    properties: {}
-  }
-};
+// ---------------- Visitors ----------------
+const getTodayVisitors = fn('get_today_visitors', "Visitors who checked in on a date (default today), and any awaiting approval.",
+  { date: { type: 'string', description: 'YYYY-MM-DD' } });
 
-const getRoommateMatch = {
-  name: 'get_roommate_match',
-  description: 'Find compatible roommates based on preferences like sleep timing, habits, interests.',
-  parameters: {
-    type: 'object',
-    properties: {
-      tenantId: { type: 'string', description: 'Tenant looking for roommate' },
-      sleepTiming: { type: 'string', enum: ['early-sleeper', 'night-owl', 'flexible'] },
-      smokingPreference: { type: 'string', enum: ['smoker', 'non-smoker', 'no-preference'] },
-      cleanlinessLevel: { type: 'number', min: 1, max: 5 },
-      language: { type: 'string' },
-      interests: { type: 'string', description: 'Comma-separated interests' }
-    }
-  }
-};
+const logVisitor = fn('log_visitor',
+  'Record a visitor at the gate. Tenants can pre-register their own guests.',
+  {
+    name: { type: 'string' },
+    phone: { type: 'string' },
+    purpose: { type: 'string' },
+    tenantName: { type: 'string', description: 'Whom they are visiting' },
+    numberOfGuests: { type: 'number' }
+  }, ['name', 'purpose']);
 
-// ==========================================
-// SMART SEARCH
-// ==========================================
-const smartSearch = {
-  name: 'smart_search',
-  description: 'Convert natural language query to database search. Use for complex queries like "show girls who haven\'t paid rent" or "rooms becoming empty next week".',
-  parameters: {
-    type: 'object',
-    properties: {
-      query: { type: 'string', description: 'The natural language search query' },
-      entityType: { type: 'string', enum: ['tenants', 'rooms', 'payments', 'complaints'], description: 'What type of data to search' }
-    },
-    required: ['query']
-  }
-};
+const updateVisitor = fn('update_visitor',
+  'Owner: approve, reject or check out a visitor by name.',
+  {
+    visitorName: { type: 'string' },
+    action: { type: 'string', enum: ['approve', 'reject', 'check-out'] }
+  }, ['visitorName', 'action']);
 
-// ==========================================
-// COMMUNICATION FUNCTIONS
-// ==========================================
-const generateEmail = {
-  name: 'generate_email',
-  description: 'Generate a professional email. Types: welcome, rent-reminder, move-out, complaint-response, notice.',
-  parameters: {
-    type: 'object',
-    properties: {
-      type: { type: 'string', enum: ['welcome', 'rent-reminder', 'move-out', 'complaint-response', 'notice', 'custom'] },
-      recipientName: { type: 'string' },
-      context: { type: 'string', description: 'Additional context for the email' }
-    },
-    required: ['type']
-  }
-};
+// ---------------- Notices ----------------
+const generateNotice = fn('generate_notice',
+  'Owner: turn rough text into a professional notice (auto-translated to Hindi, Telugu, Tamil, Kannada), publish it and notify all tenants. E.g. "water problem tomorrow 10 to 2".',
+  {
+    rawInput: { type: 'string' },
+    priority: { type: 'string', enum: ['low', 'medium', 'high', 'urgent'] },
+    category: { type: 'string', enum: ['general', 'maintenance', 'payment', 'event', 'rule', 'emergency'] }
+  }, ['rawInput']);
 
-const generateWhatsAppMessage = {
-  name: 'generate_whatsapp_message',
-  description: 'Generate a professional WhatsApp message for various purposes.',
-  parameters: {
-    type: 'object',
-    properties: {
-      purpose: { type: 'string', description: 'Purpose of the message' },
-      recipientName: { type: 'string' },
-      context: { type: 'string', description: 'Additional context' }
-    },
-    required: ['purpose']
-  }
-};
+const getNotices = fn('get_notices', 'Latest notices / announcements.',
+  { category: { type: 'string', enum: ['general', 'maintenance', 'payment', 'event', 'rule', 'emergency'] }, limit: { type: 'number' } });
 
-// ==========================================
-// EXPENSE FUNCTIONS
-// ==========================================
-const getExpenseSummary = {
-  name: 'get_expense_summary',
-  description: 'Get expense breakdown by category. Use when someone asks about expenses or costs.',
-  parameters: {
-    type: 'object',
-    properties: {
-      month: { type: 'number' },
-      year: { type: 'number' },
-      category: { type: 'string' }
-    }
-  }
-};
+// ---------------- Food ----------------
+const getMenu = fn('get_menu', "The food menu for a day (default today) with nutrition. Use for 'what's for dinner', 'tomorrow's breakfast'.",
+  {
+    day: { type: 'string', enum: DAYS },
+    meal: { type: 'string', enum: ['breakfast', 'lunch', 'snacks', 'dinner'] }
+  });
 
-const getExpensePrediction = {
-  name: 'get_expense_prediction',
-  description: 'Predict next month expenses based on historical data.',
-  parameters: {
-    type: 'object',
-    properties: {}
-  }
-};
+const getFoodRecommendation = fn('get_food_recommendation',
+  "Personalised food advice from this week's menu for a dietary goal (high protein, weight loss, diabetic…).",
+  { dietaryNeed: { type: 'string' }, restrictions: { type: 'string' } }, ['dietaryNeed']);
 
-// ==========================================
-// KNOWLEDGE BASE (RAG)
-// ==========================================
-const searchKnowledgeBase = {
-  name: 'search_knowledge_base',
-  description: 'Search the PG knowledge base (rules, policies, agreements) to answer questions. Use for questions about PG rules, refund policy, food policy, visitor rules, etc.',
-  parameters: {
-    type: 'object',
-    properties: {
-      query: { type: 'string', description: 'The question to search for' },
-      category: { type: 'string', enum: ['pg-rules', 'food-policy', 'refund-policy', 'agreement', 'visitor-rules', 'safety', 'amenities'] }
-    },
-    required: ['query']
-  }
-};
+// ---------------- Maintenance ----------------
+const scheduleMaintenance = fn('schedule_maintenance',
+  'Owner: schedule a maintenance task (AC service, pest control, plumbing…). Convert relative dates like "next Monday" to YYYY-MM-DD.',
+  {
+    type: { type: 'string', enum: MAINTENANCE_TYPES },
+    description: { type: 'string' },
+    scheduledDate: { type: 'string', description: 'YYYY-MM-DD' },
+    roomNumber: { type: 'string' },
+    assignedTo: { type: 'string' },
+    estimatedCost: { type: 'number' }
+  }, ['type', 'description', 'scheduledDate']);
 
-// ==========================================
-// VIOLATION & RISK
-// ==========================================
-const getRiskyTenants = {
-  name: 'get_risky_tenants',
-  description: 'Get tenants with high violation scores or risky behavior patterns.',
-  parameters: {
-    type: 'object',
-    properties: {}
-  }
-};
+const getMaintenancePredictions = fn('get_maintenance_predictions', 'Predict upcoming equipment failures / maintenance needs from complaint history.',
+  { type: { type: 'string' } });
 
-// ==========================================
-// OCCUPANCY PREDICTION
-// ==========================================
-const getOccupancyPrediction = {
-  name: 'get_occupancy_prediction',
-  description: 'Predict occupancy for upcoming periods — next week, next month, festival season, vacation season.',
-  parameters: {
-    type: 'object',
-    properties: {
-      period: { type: 'string', enum: ['next-week', 'next-month', 'festival-season', 'vacation-season'], description: 'Period to predict' }
-    }
-  }
-};
+// ---------------- Reports & insights ----------------
+const generateMonthlyReport = fn('generate_monthly_report', 'Full monthly business report: income, expenses, profit, occupancy, complaints, late payments.',
+  { month: { type: 'number' }, year: { type: 'number' } });
 
-// ==========================================
-// REVENUE OPTIMIZER
-// ==========================================
-const getRevenueOptimization = {
-  name: 'get_revenue_optimization',
-  description: 'Get AI suggestions for revenue optimization — rent adjustments, discounts, underpriced rooms.',
-  parameters: {
-    type: 'object',
-    properties: {}
-  }
-};
+const getBusinessInsights = fn('get_business_insights', 'AI business insights and recommendations for growing the PG.');
+const getOccupancyPrediction = fn('get_occupancy_prediction', 'Forecast occupancy for the coming month.');
+const getRevenueOptimization = fn('get_revenue_optimization', 'Suggestions to increase revenue: rent adjustments, underpriced rooms, vacancy fills.');
+const getSmartTodoList = fn('get_smart_todo_list', "Prioritised to-do list for the owner today (collect rent, fix urgent complaints, approve visitors…).");
 
-// ==========================================
-// TODO LIST
-// ==========================================
-const getSmartTodoList = {
-  name: 'get_smart_todo_list',
-  description: 'Get AI-generated smart to-do list for today. Includes rent collection, repairs, approvals, etc.',
-  parameters: {
-    type: 'object',
-    properties: {}
-  }
-};
+// ---------------- Expenses ----------------
+const getExpenseSummary = fn('get_expense_summary', 'Expenses for a month grouped by category.',
+  { month: { type: 'number' }, year: { type: 'number' }, category: { type: 'string', enum: EXPENSE_CATEGORIES } });
 
-// ==========================================
-// EXPORT ALL FUNCTIONS
-// ==========================================
+const addExpense = fn('add_expense', 'Owner: record an expense, e.g. "paid ₹3500 electricity bill" or "bought groceries for 12000".',
+  {
+    category: { type: 'string', enum: EXPENSE_CATEGORIES },
+    amount: { type: 'number' },
+    description: { type: 'string' },
+    vendorName: { type: 'string' },
+    date: { type: 'string', description: 'YYYY-MM-DD, default today' }
+  }, ['category', 'amount']);
 
-// Functions available for owner role
+const getExpensePrediction = fn('get_expense_prediction', "Predict next month's expenses by category.");
+
+// ---------------- Search & comms ----------------
+const smartSearch = fn('smart_search',
+  'Answer complex data questions not covered by other tools, e.g. "female tenants who paid late twice", "rooms on floor 2 with AC and free beds".',
+  {
+    query: { type: 'string' },
+    entityType: { type: 'string', enum: ['tenants', 'rooms', 'payments', 'complaints'] }
+  }, ['query']);
+
+const generateEmail = fn('generate_email', 'Draft a professional email (welcome, rent reminder, move-out, complaint response, notice, custom).',
+  {
+    type: { type: 'string', enum: ['welcome', 'rent-reminder', 'move-out', 'complaint-response', 'notice', 'custom'] },
+    recipientName: { type: 'string' },
+    context: { type: 'string' }
+  }, ['type']);
+
+const generateWhatsAppMessage = fn('generate_whatsapp_message', 'Draft a short, friendly WhatsApp message for any purpose.',
+  { purpose: { type: 'string' }, recipientName: { type: 'string' }, context: { type: 'string' } }, ['purpose']);
+
+const searchKnowledgeBase = fn('search_knowledge_base',
+  'Answer questions about PG rules and policies (gate timing, visitors, deposit, notice period, late fee, laundry, parking, smoking…) from the uploaded documents.',
+  { query: { type: 'string' } }, ['query']);
+
+// ---------------- Role toolsets ----------------
+export const tenantFunctions = [
+  searchRooms, getEmptyRooms, getRoomDetails, getFacilities,
+  getRentStatus, getPaymentInfo,
+  createComplaint, getMyComplaints,
+  getNotices, getMenu, getFoodRecommendation,
+  getRoommateInfo, getRoommateMatch,
+  logVisitor,
+  searchKnowledgeBase
+];
+
 export const ownerFunctions = [
-  searchRooms, getEmptyRooms, getRoomDetails, getAutoRoomMatch,
-  getIncomeReport, getUnpaidTenants, getRentStatus, processPayment, getRentPrediction,
-  createComplaint, getPendingComplaints, getComplaintsByTenant,
-  getTodayVisitors,
+  getDashboardStats,
+  searchRooms, getEmptyRooms, getRoomDetails, getAutoRoomMatch, getFacilities,
+  getIncomeReport, getUnpaidTenants, recordPayment, sendRentReminders, getRentStatus, getPaymentInfo, getRentPrediction,
+  createComplaint, getPendingComplaints, getMyComplaints, updateComplaintStatus,
+  findTenant, getRoommateInfo, getRoommateMatch, getRiskyTenants,
+  getTodayVisitors, logVisitor, updateVisitor,
   generateNotice, getNotices,
   getMenu, getFoodRecommendation,
   scheduleMaintenance, getMaintenancePredictions,
-  generateMonthlyReport, getDailySummary, getBusinessInsights,
-  getRoommateInfo, getFacilities, getRoommateMatch,
-  smartSearch,
-  generateEmail, generateWhatsAppMessage,
-  getExpenseSummary, getExpensePrediction,
-  searchKnowledgeBase,
-  getRiskyTenants,
-  getOccupancyPrediction,
-  getRevenueOptimization,
-  getSmartTodoList
-];
-
-// Functions available for tenant role
-export const tenantFunctions = [
-  searchRooms, getEmptyRooms, getRoomDetails,
-  getRentStatus, processPayment,
-  createComplaint, getComplaintsByTenant,
-  getNotices,
-  getMenu, getFoodRecommendation,
-  getRoommateInfo, getFacilities,
+  generateMonthlyReport, getBusinessInsights, getOccupancyPrediction, getRevenueOptimization, getSmartTodoList,
+  getExpenseSummary, addExpense, getExpensePrediction,
+  smartSearch, generateEmail, generateWhatsAppMessage,
   searchKnowledgeBase
 ];
 
-// Functions available for visitor role
-export const visitorFunctions = [
-  searchRooms, getEmptyRooms, getRoomDetails,
-  getNotices,
-  getFacilities,
-  searchKnowledgeBase
-];
+export const visitorFunctions = [searchRooms, getEmptyRooms, getRoomDetails, getFacilities, getNotices, searchKnowledgeBase];
 
-// Get functions by role
 export function getFunctionsByRole(role) {
-  switch (role) {
-    case 'owner': return ownerFunctions;
-    case 'tenant': return tenantFunctions;
-    case 'visitor': return visitorFunctions;
-    default: return visitorFunctions;
-  }
+  if (role === 'owner') return ownerFunctions;
+  if (role === 'tenant') return tenantFunctions;
+  return visitorFunctions;
 }
 
-// Get all function names
-export function getAllFunctionNames() {
-  return ownerFunctions.map(f => f.name);
+export function isAllowed(role, name) {
+  return getFunctionsByRole(role).some(f => f.name === name);
 }
